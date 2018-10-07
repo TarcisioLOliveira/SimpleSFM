@@ -1,0 +1,5 @@
+*.swp
+camera
+images*
+meshes
+camera.npz
