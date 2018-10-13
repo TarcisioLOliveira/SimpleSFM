@@ -60,7 +60,7 @@ def ORB_detect(img1, img2):
         if m.distance < 0.90*n.distance:
             good.append(m)
 
-    return good
+    return (good, kp1, kp2)
 
 def SIFT_detect(img1, img2):
     # Initiate SIFT detector
@@ -86,7 +86,7 @@ def SIFT_detect(img1, img2):
         if m.distance < 0.75*n.distance:
             good.append(m)
 
-    return good
+    return (good, kp1, kp2)
 
 MIN_MATCH_COUNT = 10
 
@@ -133,7 +133,7 @@ for img_path in img_path_list[1:]:
 
     print(img_path)
 
-    good = SIFT_detect(img1, img2)
+    (good, kp1, kp2) = SIFT_detect(img1, img2)
 
     if len(good)>=MIN_MATCH_COUNT:
         points1 = np.array([kp1[x.queryIdx].pt for x in good])
@@ -152,13 +152,12 @@ for img_path in img_path_list[1:]:
         t = np.array([u[:, 2]]).T
         P1 = np.concatenate((R, t), axis=1)
         X = cv.triangulatePoints(P1, P2, points1.T, points2.T)
-        X_T = X[:3, :].T
         X = X/X[3,:]
         X = X[:3, :]
         x_coords = [int(kp2[x.trainIdx].pt[0]) for x in good]
         y_coords = [int(kp2[x.trainIdx].pt[1]) for x in good]
         colors = img2[y_coords, x_coords, :]
-        write_ply(X_T, colors, "meshes/mesh"+str(i-1)+".ply")
+        write_ply(X.T, colors, "meshes/mesh"+str(i-1)+".ply")
         img2 = np.copy(img1)
         P2 = np.copy(P1)
     else:
