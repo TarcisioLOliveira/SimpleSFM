@@ -90,7 +90,7 @@ def kNNMatch(kp1, des1, kp2, des2, lowes_thresh=0.75):
 
 def findEssentialMatrix(p1,p2, K):
     F = cv.findFundamentalMat(p1, p2, cv.FM_RANSAC, 0.1, 0.99)
-    return np.matmul(K.T, np.matmul(F[0], K))
+    return np.dot(K.T, np.dot(F[0], K))
 
 def decomposeEssential(E):
     w, u, vt = cv.SVDecomp(E)
@@ -100,7 +100,7 @@ def decomposeEssential(E):
     Winv = np.array([[ 0, 1, 0],
                      [-1, 0, 0],
                      [ 0, 0, 1]])
-    R = np.matmul(u, np.matmul(W, vt.T))
+    R = np.dot(u, np.dot(W, vt.T))
     t = np.array([u[:, 2]]).T
     return R, t
 
