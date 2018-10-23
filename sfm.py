@@ -1,3 +1,4 @@
+#!/usr/bin/python2
 import numpy as np
 import cv2 as cv
 from matplotlib import pyplot as plt
@@ -140,7 +141,7 @@ def SfM(img_path_list, K, pointCloud=[], cameraPoses=[], MIN_MATCH_COUNT=10):
             y_coords = [int(kp1[x.queryIdx].pt[1]) for x in matches]
             image_coords = np.column_stack([x_coords, y_coords])
             colors = img1[y_coords, x_coords, :]
-            write_ply(point_3d, colors, "meshes/mesh"+str(i-1)+".ply")
+            write_ply(point_3d, colors, "meshes/mesh"+str(i)+".ply")
 
             '''Camera Pose from 2D3DMatch'''
             _, rvec, tvec, inliers = cv.solvePnPRansac(
@@ -177,13 +178,12 @@ if __name__  == '__main__':
         # if not os.path.isdir("./meshes"):
         #     os.mkdir("meshes")
 
-    f = 2500
-    width = 1024
-    heigth = 768
+    f = 2500.0
+    width = 1024.0
+    height = 768.0
     K = np.array([[f,0,width/2],
-                    [0,f,heigth/2],
-                    [0,0,1]])
-
+                  [0,f,height/2],
+                  [0,0,1]])
     path = Path('data/crazyhorse')
     img_path_list = sorted([str(x) for x in path.iterdir()])
     SfM(img_path_list, K)
