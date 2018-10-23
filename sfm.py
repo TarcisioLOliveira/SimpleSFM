@@ -90,7 +90,7 @@ def kNNMatch(kp1, des1, kp2, des2, lowes_thresh=0.75):
     return good
 
 def findEssentialMatrix(p1,p2, K):
-    F = cv.findFundamentalMat(p1, p2, cv.FM_RANSAC, 0.1, 0.99)
+    F = cv.findFundamentalMat(p1, p2, cv.FM_RANSAC, 3, 0.99)
     return np.dot(K.T, np.dot(F[0], K))
 
 def decomposeEssential(E):
@@ -105,12 +105,12 @@ def decomposeEssential(E):
     t = np.array([u[:, 2]]).T
     return R, t
 
-def SfM(img_path_list, K, pointCloud=[], cameraPoses=[], MIN_MATCH_COUNT=10):
-    img2 = cv.imread(img_path_list[0], 1) # queryImage
-    P2 = np.column_stack([np.eye(3), np.zeros(3)])
+def SfM(img_path_list, K, distCoeffs = 0, pointCloud=[], cameraPoses=[], MIN_MATCH_COUNT=10):
+    img1 = cv.imread(img_path_list[0], 1) # trainImage
+    P1 = np.column_stack([np.eye(3), np.zeros(3)])
 
     for i, img_path in enumerate(img_path_list[1:]):
-        img1 = cv.imread(img_path, 1) # trainImage
+        img2 = cv.imread(img_path, 1) # queryImage
 
         #cv.imwrite("test"+str(i)+".png", undistort(img1, mtx, dist))
 
@@ -121,13 +121,13 @@ def SfM(img_path_list, K, pointCloud=[], cameraPoses=[], MIN_MATCH_COUNT=10):
         if len(matches)>=MIN_MATCH_COUNT:
             points1 = np.array([kp1[x.queryIdx].pt for x in matches])
             points2 = np.array([kp2[x.trainIdx].pt for x in matches])
-            pts1_norm = cv.undistortPoints(np.expand_dims(points1, axis=1), cameraMatrix=K, distCoeffs=None)
-            pts2_norm = cv.undistortPoints(np.expand_dims(points2, axis=1), cameraMatrix=K, distCoeffs=None)
+            pts1_norm = cv.undistortPoints(np.expand_dims(points1, axis=1), cameraMatrix=K, distCoeffs=distCoeffs)
+            pts2_norm = cv.undistortPoints(np.expand_dims(points2, axis=1), cameraMatrix=K, distCoeffs=distCoeffs)
 
             ''' Param Estimation '''
             E = findEssentialMatrix(pts1_norm, pts2_norm, K)
             R, t = decomposeEssential(E)
-            P1 = np.concatenate((R, t), axis=1)
+            P2 = np.concatenate((R, t), axis=1)
 
             ''' Triangulation '''
             point_4d_hom = cv.triangulatePoints(P1, P2, pts1_norm, pts2_norm)
@@ -147,36 +147,28 @@ def SfM(img_path_list, K, pointCloud=[], cameraPoses=[], MIN_MATCH_COUNT=10):
             _, rvec, tvec, inliers = cv.solvePnPRansac(
                                 point_3d.astype(np.float64),
                                 image_coords.astype(np.float64),
-                                K, distCoeffs=None, flags=cv.SOLVEPNP_ITERATIVE)
+                                K, distCoeffs=distCoeffs, flags=cv.SOLVEPNP_ITERATIVE)
 
             cam_rmat, _ = cv.Rodrigues(rvec)
             camera_pose = np.concatenate([R, tvec], axis=1)
             cameraPoses.append(camera_pose)
 
-            img2 = np.copy(img1)
-            P2 = np.copy(P1)
+            img1 = np.copy(img2)
+            P1 = np.copy(P2)
         else:
             print("Not enough matches: "+str(len(matches))+"/"+str(MIN_MATCH_COUNT))
 
 if __name__  == '__main__':
-    # if len(sys.argv) > 1:
-    #     path = Path(sys.argv[2])
-    #     camera_data = np.load(sys.argv[1])
-    #     if sys.argv[1] == "calibration_data.npz":
-    #         mtx = camera_data['intrinsic_matrix']
-    #         dist = camera_data['distCoeff']
-    #     else:
-    #         ret = camera_data['ret']
-    #         K = camera_data['mtx']
-    #         dist = camera_data['dist']
-    #         rvecs = camera_data['rvecs']
-    #     tvecs = camera_data['tvecs']
-    #
-    # else:
-    #     sys.exit()
+    #camera_data = np.load("calibration_data.npz")
+    #K = camera_data['intrinsic_matrix']
+    #distCoeffs = camera_data['distCoeff']
 
-        # if not os.path.isdir("./meshes"):
-        #     os.mkdir("meshes")
+    #camera_data = np.load("camera.npz")
+    #K = camera_data['mtx']
+    #distCoeffs = camera_data['dist']
+
+    if not os.path.isdir("./meshes"):
+        os.mkdir("meshes")
 
     f = 2500.0
     width = 1024.0
@@ -184,8 +176,8 @@ if __name__  == '__main__':
     K = np.array([[f,0,width/2],
                   [0,f,height/2],
                   [0,0,1]])
-    path = Path('data/crazyhorse')
+    path = Path('./data/crazyhorse')
     img_path_list = sorted([str(x) for x in path.iterdir()])
-    SfM(img_path_list, K)
+    SfM(img_path_list, K)#, distCoeffs=distCoeffs)
     #cv.imwrite("test0.png", undistort(img2, mtx, dist))
 
