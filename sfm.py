@@ -130,7 +130,7 @@ def SfM(img_path_list, K, distCoeffs = 0, pointCloud=[], cameraPoses=[], MIN_MAT
             P2 = np.concatenate((R, t), axis=1)
 
             ''' Triangulation '''
-            point_4d_hom = cv.triangulatePoints(P1, P2, pts1_norm, pts2_norm)
+            point_4d_hom = cv.triangulatePoints(np.dot(K,P1), np.dot(K,P2), pts1_norm, pts2_norm)
             # point_4d_hom = cv.triangulatePoints(P1, P2, np.expand_dims(points1, axis=1), np.expand_dims(points2, axis=1))
             point_4d = point_4d_hom / np.tile(point_4d_hom[-1, :], (4, 1))
             point_3d = point_4d[:3, :].T
@@ -169,14 +169,19 @@ if __name__  == '__main__':
 
     if not os.path.isdir("./meshes"):
         os.mkdir("meshes")
-
-    f = 2500.0
-    width = 1024.0
-    height = 768.0
-    K = np.array([[f,0,width/2],
-                  [0,f,height/2],
-                  [0,0,1]])
-    path = Path('./data/crazyhorse')
+# [[3.14063466e+03 0.00000000e+00 1.63150000e+03]
+#  [0.00000000e+00 3.14063466e+03 1.22350000e+03]
+#  [0.00000000e+00 0.00000000e+00 1.00000000e+00]]
+    K = np.array([[3140.63, 0, 1631.5],
+         [0, 3140.63, 1223.5],
+         [0, 0, 1]])
+    # f = 2500.0
+    # width = 1024.0
+    # height = 768.0
+    # K = np.array([[f,0,width/2],
+    #               [0,f,height/2],
+    #               [0,0,1]])
+    path = Path('./data/berlin/images')
     img_path_list = sorted([str(x) for x in path.iterdir()])
     SfM(img_path_list, K)#, distCoeffs=distCoeffs)
     #cv.imwrite("test0.png", undistort(img2, mtx, dist))
