@@ -89,20 +89,26 @@ def kNNMatch(kp1, des1, kp2, des2, lowes_thresh=0.75):
 
     return good
 
-def findEssentialMatrix(p1,p2, K):
-    F = cv.findFundamentalMat(p1, p2, cv.FM_RANSAC, 3, 0.99)
-    return np.dot(K.T, np.dot(F[0], K))
+def findDecomposedEssentialMatrix(p1, p2, K):
+    # fundamental matrix and inliers
+    F, mask = cv.findFundamentalMat(p1, p2, cv.FM_RANSAC, 3, 0.99)
+    mask = mask.astype(bool).flatten()
+    E = np.dot(K.T, np.dot(F, K))
 
-def decomposeEssential(E):
-    w, u, vt = cv.SVDecomp(E)
-    W = np.array([[0, -1, 0],
-                  [1,  0, 0],
-                  [0,  0, 1]])
-    Winv = np.array([[ 0, 1, 0],
-                     [-1, 0, 0],
-                     [ 0, 0, 1]])
-    R = np.dot(u, np.dot(W, vt.T))
-    t = np.array([u[:, 2]]).T
+    _, R, t, _ = cv.recoverPose(E, p1[mask], p2[mask], K)
+
+    # w, u, vt = cv.SVDecomp(E)
+    # W = np.array([[0, -1, 0],
+    #               [1,  0, 0],
+    #               [0,  0, 1]])
+    # Winv = np.array([[ 0, 1, 0],
+    #                  [-1, 0, 0],
+    #                  [ 0, 0, 1]])
+    # R = np.dot(u, np.dot(W, vt.T))
+    # t = np.array([u[:, 2]]).T
+    #
+    # print('----------------')
+
     return R, t
 
 def SfM(img_path_list, K, distCoeffs = 0, pointCloud=[], cameraPoses=[], MIN_MATCH_COUNT=10):
@@ -110,6 +116,11 @@ def SfM(img_path_list, K, distCoeffs = 0, pointCloud=[], cameraPoses=[], MIN_MAT
     P1 = np.column_stack([np.eye(3), np.zeros(3)])
 
     for i, img_path in enumerate(img_path_list[1:]):
+
+        if not img_path.endswith('.jpg') and not img_path.endswith('.png'):
+            continue
+
+        print('Reading img: {}'.format(img_path))
         img2 = cv.imread(img_path, 1) # queryImage
 
         #cv.imwrite("test"+str(i)+".png", undistort(img1, mtx, dist))
@@ -125,27 +136,27 @@ def SfM(img_path_list, K, distCoeffs = 0, pointCloud=[], cameraPoses=[], MIN_MAT
             pts2_norm = cv.undistortPoints(np.expand_dims(points2, axis=1), cameraMatrix=K, distCoeffs=distCoeffs)
 
             ''' Param Estimation '''
-            E = findEssentialMatrix(pts1_norm, pts2_norm, K)
-            R, t = decomposeEssential(E)
-            P2 = np.concatenate((R, t), axis=1)
+            # E = findEssentialMatrix(pts1_norm, pts2_norm, K)
+            R, t = findDecomposedEssentialMatrix(points1, points2, K)
+            P2 = np.hstack((R, t))
 
             ''' Triangulation '''
-            point_4d_hom = cv.triangulatePoints(np.dot(K,P1), np.dot(K,P2), pts1_norm, pts2_norm)
-            # point_4d_hom = cv.triangulatePoints(P1, P2, np.expand_dims(points1, axis=1), np.expand_dims(points2, axis=1))
-            point_4d = point_4d_hom / np.tile(point_4d_hom[-1, :], (4, 1))
-            point_3d = point_4d[:3, :].T
-            pointCloud.append(point_3d)
+            points_4d_hom = cv.triangulatePoints(P1, P2, pts1_norm, pts2_norm)
+            # points_3d = cv.convertPointsFromHomogeneous(points_4d_hom.T).reshape(-1,3)
+            points_4d = points_4d_hom / np.tile(points_4d_hom[-1, :], (4, 1))
+            points_3d = points_4d[:3, :].T
+            pointCloud.append(points_3d)
 
             ''' Point Cloud '''
             x_coords = [int(kp1[x.queryIdx].pt[0]) for x in matches]
             y_coords = [int(kp1[x.queryIdx].pt[1]) for x in matches]
             image_coords = np.column_stack([x_coords, y_coords])
             colors = img1[y_coords, x_coords, :]
-            write_ply(point_3d, colors, "meshes/mesh"+str(i)+".ply")
+            write_ply(points_3d, colors, "meshes/mesh{}.ply".format(i))
 
             '''Camera Pose from 2D3DMatch'''
             _, rvec, tvec, inliers = cv.solvePnPRansac(
-                                point_3d.astype(np.float64),
+                                points_3d.astype(np.float64),
                                 image_coords.astype(np.float64),
                                 K, distCoeffs=distCoeffs, flags=cv.SOLVEPNP_ITERATIVE)
 
@@ -169,20 +180,20 @@ if __name__  == '__main__':
 
     if not os.path.isdir("./meshes"):
         os.mkdir("meshes")
-# [[3.14063466e+03 0.00000000e+00 1.63150000e+03]
-#  [0.00000000e+00 3.14063466e+03 1.22350000e+03]
-#  [0.00000000e+00 0.00000000e+00 1.00000000e+00]]
-    K = np.array([[3140.63, 0, 1631.5],
-         [0, 3140.63, 1223.5],
-         [0, 0, 1]])
+
+    K = np.array([[2759.48, 0,       1520.69],
+                  [0,       2764.16, 1006.81],
+                  [0,       0,       1]])
+
+    # path = Path('./data/berlin/images')
+    path = Path('./data/fountain-P11/images')
+    img_path_list = sorted([str(x) for x in path.iterdir()])
+    SfM(img_path_list, K)#, distCoeffs=distCoeffs)
+    #cv.imwrite("test0.png", undistort(img2, mtx, dist))
+
     # f = 2500.0
     # width = 1024.0
     # height = 768.0
     # K = np.array([[f,0,width/2],
     #               [0,f,height/2],
     #               [0,0,1]])
-    path = Path('./data/berlin/images')
-    img_path_list = sorted([str(x) for x in path.iterdir()])
-    SfM(img_path_list, K)#, distCoeffs=distCoeffs)
-    #cv.imwrite("test0.png", undistort(img2, mtx, dist))
-
