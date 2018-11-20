@@ -1,4 +1,3 @@
-#!/usr/bin/python2
 import numpy as np
 import cv2 as cv
 from matplotlib import pyplot as plt
@@ -6,177 +5,138 @@ from pathlib2 import Path
 import os
 import sys
 
-def undistort(img, mtx, dist):
-    h, w = img.shape[:2]
-    newcameramtx, roi = cv.getOptimalNewCameraMatrix(mtx, dist, (w,h), 1, (w,h))
+class SFM(object):
+    def __init__(self, instrinsic, images_path):
+        self.distCoeffs = 0
+        self.MIN_MATCH_COUNT=10
+        self.K = instrinsic
 
-    # undistort
-    mapx, mapy = cv.initUndistortRectifyMap(mtx, dist, None, newcameramtx, (w,h), 5)
-    dst = cv.remap(img, mapx, mapy, cv.INTER_LINEAR)
+        img_path_list = sorted([str(x) for x in path.iterdir()])
+        self.img_data = self.read_and_compute_keypoints(img_path_list)
+        self.point_cloud, self.colors = self.compute_initial_cloud(self.img_data[0], self.img_data[1])
+        print(self.img_data[0]['extrinsic'])
 
-    # crop the image
-    # x,y,w,h = roi
-    # dst = dst[y:y+h, x:x+w]
-    return dst
+        self.write_ply(self.point_cloud, self.colors, "meshes/mesh{}.ply".format(0))
 
-def write_ply(coords, colors, filename):
-    ply_header = (
-                '''ply
-                format ascii 1.0
-                element vertex {vertex_count}
-                property float x
-                property float y
-                property float z
-                property uchar red
-                property uchar green
-                property uchar blue
-                end_header
-                '''
-                )
-    points = np.hstack([coords, colors])
-    with open(filename, 'w') as outfile:
-        #outfile.write(ply_header.format(vertex_count=len(coords)))
-        np.savetxt(outfile, points, '%f %f %f %d %d %d')
+    def read_and_compute_keypoints(self, img_path_list):
+        img_data = []
+        for img_path in img_path_list:
+            print('Reading image: {}'.format(img_path))
+            img = cv.imread(img_path, 1)
+            kps, desc = self.SIFT_detect(img)
+            img_name = img_path.split('/')[-1]
+            img_data.append({'pixels': img, 'descriptors': desc, 'keypoints': kps})
 
-def ORB_detect(img1, img2):
-    # Initiate ORB detector
-    orb = cv.ORB_create(WTA_K=4)
+        return img_data
 
-    # find the keypoints and descriptors with ORB
-    kp1, des1 = orb.detectAndCompute(cv.cvtColor(img1, cv.COLOR_RGB2GRAY), None)
-    kp2, des2 = orb.detectAndCompute(cv.cvtColor(img2, cv.COLOR_RGB2GRAY), None)
+    def SIFT_detect(self, img):
+        # Initiate SIFT detector
+        sift = cv.xfeatures2d.SIFT_create()
+        # find the keypoints and descriptors with SIFT
+        kp, des = sift.detectAndCompute(cv.cvtColor(img, cv.COLOR_RGB2GRAY),None)
+        return kp, des
 
-    # create BFMatcher object
-    bf = cv.BFMatcher(cv.NORM_HAMMING2)#, crossCheck=True)
-    # Match descriptors.
-    matches = bf.knnMatch(des1, des2, k=2)
-    # Sort them in the order of their distance.
-    # matches = sorted(matches, key = lambda x:x.distance)
+    def kNNMatch(self, img1, img2, lowes_thresh=0.75):
+        kp1, des1 = img1['keypoints'], img1['descriptors']
+        kp2, des2 = img2['keypoints'], img2['descriptors']
 
-    # ratio test, stackoverflow
-    good = []
-    for j,(m,n) in enumerate(matches):
-        if m.distance < 0.90*n.distance:
-            good.append(m)
+        FLANN_INDEX_KDTREE = 0
+        index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)
 
-    return (good, kp1, kp2)
+        search_params = dict(checks=50)   # or pass empty dictionary
+        flann = cv.FlannBasedMatcher(index_params,search_params)
+        matches = flann.knnMatch(des1,des2,k=2)
 
-def SIFT_detect(img1, img2):
-    # Initiate SIFT detector
-    sift = cv.xfeatures2d.SIFT_create()
+        # Need to draw only good matches, so create a mask
+        matchesMask = [[0,0] for j in range(len(matches))]
 
-    # find the keypoints and descriptors with SIFT
-    kp1, des1 = sift.detectAndCompute(cv.cvtColor(img1, cv.COLOR_RGB2GRAY),None)
-    kp2, des2 = sift.detectAndCompute(cv.cvtColor(img2, cv.COLOR_RGB2GRAY),None)
-    return kp1, des1, kp2, des2
+        # ratio test as per Lowe's paper
+        good = []
+        for j,(m,n) in enumerate(matches):
+            if m.distance < lowes_thresh*n.distance:
+                good.append(m)
 
-def kNNMatch(kp1, des1, kp2, des2, lowes_thresh=0.75):
-    FLANN_INDEX_KDTREE = 0
-    index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)
+        if len(good)>=self.MIN_MATCH_COUNT:
+            points1 = np.array([kp1[x.queryIdx].pt for x in good])
+            points2 = np.array([kp2[x.trainIdx].pt for x in good])
+            return points1, points2, good
 
-    search_params = dict(checks=50)   # or pass empty dictionary
-    flann = cv.FlannBasedMatcher(index_params,search_params)
-    matches = flann.knnMatch(des1,des2,k=2)
+        return [], [], good
 
-    # Need to draw only good matches, so create a mask
-    matchesMask = [[0,0] for j in range(len(matches))]
+    def findDecomposedEssentialMatrix(self, p1, p2):
+        # fundamental matrix and inliers
+        F, mask = cv.findFundamentalMat(p1, p2, cv.FM_RANSAC, 3, 0.99)
+        mask = mask.astype(bool).flatten()
+        E = np.dot(self.K.T, np.dot(F, self.K))
 
-    # ratio test as per Lowe's paper
-    good = []
-    for j,(m,n) in enumerate(matches):
-        if m.distance < lowes_thresh*n.distance:
-            good.append(m)
+        _, R, t, _ = cv.recoverPose(E, p1[mask], p2[mask], self.K)
 
-    return good
+        return R, t
 
-def findDecomposedEssentialMatrix(p1, p2, K):
-    # fundamental matrix and inliers
-    F, mask = cv.findFundamentalMat(p1, p2, cv.FM_RANSAC, 3, 0.99)
-    mask = mask.astype(bool).flatten()
-    E = np.dot(K.T, np.dot(F, K))
+    def triangulatePoints(self, P1, P2, points1, points2):
+        pts1_norm = cv.undistortPoints(np.expand_dims(points1, axis=1),
+                cameraMatrix=self.K, distCoeffs=self.distCoeffs)
+        pts2_norm = cv.undistortPoints(np.expand_dims(points2, axis=1),
+                cameraMatrix=self.K, distCoeffs=self.distCoeffs)
+        points_4d_hom = cv.triangulatePoints(P1, P2, pts1_norm, pts2_norm)
+        # points_3d = cv.convertPointsFromHomogeneous(points_4d_hom.T).reshape(-1,3)
+        points_4d = points_4d_hom / np.tile(points_4d_hom[-1, :], (4, 1))
+        points_3d = points_4d[:3, :].T
+        return points_3d
 
-    _, R, t, _ = cv.recoverPose(E, p1[mask], p2[mask], K)
+    def compute_initial_cloud(self, img1, img2):
+            ''' Keypoint Matching '''
+            points1, points2, matches = self.kNNMatch(img1, img2)
 
-    # w, u, vt = cv.SVDecomp(E)
-    # W = np.array([[0, -1, 0],
-    #               [1,  0, 0],
-    #               [0,  0, 1]])
-    # Winv = np.array([[ 0, 1, 0],
-    #                  [-1, 0, 0],
-    #                  [ 0, 0, 1]])
-    # R = np.dot(u, np.dot(W, vt.T))
-    # t = np.array([u[:, 2]]).T
-    #
-    # print('----------------')
-
-    return R, t
-
-def SfM(img_path_list, K, distCoeffs = 0, pointCloud=[], cameraPoses=[], MIN_MATCH_COUNT=10):
-    img1 = cv.imread(img_path_list[0], 1) # trainImage
-    P1 = np.column_stack([np.eye(3), np.zeros(3)])
-
-    for i, img_path in enumerate(img_path_list[1:]):
-
-        if not img_path.endswith('.jpg') and not img_path.endswith('.png'):
-            continue
-
-        print('Reading img: {}'.format(img_path))
-        img2 = cv.imread(img_path, 1) # queryImage
-
-        #cv.imwrite("test"+str(i)+".png", undistort(img1, mtx, dist))
-
-        ''' Feature extraction / Matching '''
-        kp1, des1, kp2, des2 = SIFT_detect(img1, img2)
-        matches = kNNMatch(kp1, des1, kp2, des2)
-
-        if len(matches)>=MIN_MATCH_COUNT:
-            points1 = np.array([kp1[x.queryIdx].pt for x in matches])
-            points2 = np.array([kp2[x.trainIdx].pt for x in matches])
-            pts1_norm = cv.undistortPoints(np.expand_dims(points1, axis=1), cameraMatrix=K, distCoeffs=distCoeffs)
-            pts2_norm = cv.undistortPoints(np.expand_dims(points2, axis=1), cameraMatrix=K, distCoeffs=distCoeffs)
+            if len(points1) == 0:
+                print("Not enough matches: "+str(len(matches))+"/"+str(self.MIN_MATCH_COUNT))
+                return None
 
             ''' Param Estimation '''
-            # E = findEssentialMatrix(pts1_norm, pts2_norm, K)
-            R, t = findDecomposedEssentialMatrix(points1, points2, K)
+            R, t = self.findDecomposedEssentialMatrix(points1, points2)
+
+            P1 = np.column_stack([np.eye(3), np.zeros(3)])
             P2 = np.hstack((R, t))
 
             ''' Triangulation '''
-            points_4d_hom = cv.triangulatePoints(P1, P2, pts1_norm, pts2_norm)
-            # points_3d = cv.convertPointsFromHomogeneous(points_4d_hom.T).reshape(-1,3)
-            points_4d = points_4d_hom / np.tile(points_4d_hom[-1, :], (4, 1))
-            points_3d = points_4d[:3, :].T
-            pointCloud.append(points_3d)
+            points_3d = self.triangulatePoints(P1, P2, points1, points2)
 
-            ''' Point Cloud '''
-            x_coords = [int(kp1[x.queryIdx].pt[0]) for x in matches]
-            y_coords = [int(kp1[x.queryIdx].pt[1]) for x in matches]
-            image_coords = np.column_stack([x_coords, y_coords])
-            colors = img1[y_coords, x_coords, :]
-            write_ply(points_3d, colors, "meshes/mesh{}.ply".format(i))
+            self.img_data[0]['extrinsic'] = P1
+            self.img_data[1]['extrinsic'] = P2
 
-            '''Camera Pose from 2D3DMatch'''
-            _, rvec, tvec, inliers = cv.solvePnPRansac(
-                                points_3d.astype(np.float64),
-                                image_coords.astype(np.float64),
-                                K, distCoeffs=distCoeffs, flags=cv.SOLVEPNP_ITERATIVE)
+            colors = self.get_point_colors_from_img(img1, matches)
 
-            cam_rmat, _ = cv.Rodrigues(rvec)
-            camera_pose = np.concatenate([R, tvec], axis=1)
-            cameraPoses.append(camera_pose)
+            return points_3d, colors
 
-            img1 = np.copy(img2)
-            P1 = np.copy(P2)
-        else:
-            print("Not enough matches: "+str(len(matches))+"/"+str(MIN_MATCH_COUNT))
+
+    def get_point_colors_from_img(self, img, matches):
+        x_coords = [int(img['keypoints'][x.queryIdx].pt[0]) for x in matches]
+        y_coords = [int(img['keypoints'][x.queryIdx].pt[1]) for x in matches]
+        image_coords = np.column_stack([x_coords, y_coords])
+        colors = img['pixels'][y_coords, x_coords, :]
+        return colors
+
+
+    def write_ply(self, coords, colors, filename):
+        ply_header = (
+                    '''ply
+                    format ascii 1.0
+                    element vertex {vertex_count}
+                    property float x
+                    property float y
+                    property float z
+                    property uchar red
+                    property uchar green
+                    property uchar blue
+                    end_header
+                    '''
+                    )
+        points = np.hstack([coords, colors])
+        with open(filename, 'w') as outfile:
+            #outfile.write(ply_header.format(vertex_count=len(coords)))
+            np.savetxt(outfile, points, '%f %f %f %d %d %d')
 
 if __name__  == '__main__':
-    #camera_data = np.load("calibration_data.npz")
-    #K = camera_data['intrinsic_matrix']
-    #distCoeffs = camera_data['distCoeff']
-
-    #camera_data = np.load("camera.npz")
-    #K = camera_data['mtx']
-    #distCoeffs = camera_data['dist']
 
     if not os.path.isdir("./meshes"):
         os.mkdir("meshes")
@@ -185,15 +145,7 @@ if __name__  == '__main__':
                   [0,       2764.16, 1006.81],
                   [0,       0,       1]])
 
-    # path = Path('./data/berlin/images')
     path = Path('./data/fountain-P11/images')
     img_path_list = sorted([str(x) for x in path.iterdir()])
-    SfM(img_path_list, K)#, distCoeffs=distCoeffs)
-    #cv.imwrite("test0.png", undistort(img2, mtx, dist))
 
-    # f = 2500.0
-    # width = 1024.0
-    # height = 768.0
-    # K = np.array([[f,0,width/2],
-    #               [0,f,height/2],
-    #               [0,0,1]])
+    sfm_pipeline = SFM(K, img_path_list)
