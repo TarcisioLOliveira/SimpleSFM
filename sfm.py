@@ -26,7 +26,7 @@ class SFM(object):
 
             points_idx = [x.queryIdx for x in matches]
             self.img_data[self.imgs_used]['pose'] = camera_pose
-            colors = self.get_point_colors_from_img(img, points2)
+            colors = self.get_point_colors_from_img(img, points1)
 
             point_cloud_data = {'points': points_3d,
                                 'point_img_corresp': points_idx,
@@ -186,7 +186,7 @@ class SFM(object):
                             np.array(points_3d, dtype=np.float64),
                             np.array(points_2d, dtype=np.float64),
                             self.K, None, confidence=0.99,
-                            flags=cv.SOLVEPNP_EPNP,
+                            flags=cv.SOLVEPNP_ITERATIVE,
                             reprojectionError=8.)
 
         cam_rmat, _ = cv.Rodrigues(rvec)
