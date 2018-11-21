@@ -13,15 +13,35 @@ class SFM(object):
 
         img_path_list = sorted([str(x) for x in path.iterdir()])
         self.img_data = self.read_and_compute_keypoints(img_path_list)
-        self.point_cloud, self.colors = self.compute_initial_cloud(self.img_data[0], self.img_data[1])
-        print(self.img_data[0]['extrinsic'])
+        self.point_cloud = self.compute_initial_cloud(self.img_data[0], self.img_data[1])
+        self.imgs_used = 2
 
-        self.write_ply(self.point_cloud, self.colors, "meshes/mesh{}.ply".format(0))
+        for img in self.img_data[2:]:
+            camera_pose = self.estimate_new_view_pose(img)
+            prev_img_idx = self.imgs_used - 1
+
+            points1, points2, matches = self.kNNMatch(self.img_data[prev_img_idx], img)
+            points_3d = self.triangulatePoints(self.img_data[prev_img_idx]['pose'], camera_pose,
+                                               points1, points2)
+
+            points_idx = [x.queryIdx for x in matches]
+            self.img_data[self.imgs_used]['pose'] = camera_pose
+            colors = self.get_point_colors_from_img(img, points2)
+
+            point_cloud_data = {'points': points_3d,
+                                'point_img_corresp': points_idx,
+                                'colors': colors}
+
+            self.point_cloud.append(point_cloud_data)
+            #self.bundle_adjust
+            self.imgs_used += 1
+
+        self.write_ply(self.point_cloud)
 
     def read_and_compute_keypoints(self, img_path_list):
         img_data = []
         for img_path in img_path_list:
-            print('Reading image: {}'.format(img_path))
+            print('Reading image and running SIFT: {}'.format(img_path))
             img = cv.imread(img_path, 1)
             kps, desc = self.SIFT_detect(img)
             img_name = img_path.split('/')[-1]
@@ -35,6 +55,22 @@ class SFM(object):
         # find the keypoints and descriptors with SIFT
         kp, des = sift.detectAndCompute(cv.cvtColor(img, cv.COLOR_RGB2GRAY),None)
         return kp, des
+
+    def trainFlannMatch(self, img, current_descriptors, lowes_thresh=0.75):
+        FLANN_INDEX_KDTREE = 0
+        index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)
+        search_params = dict(checks=50)   # or pass empty dictionary
+
+        flann = cv.FlannBasedMatcher(index_params, search_params)
+
+        # each element is a set of descriptors from an image
+        flann.add(current_descriptors)
+        flann.train()
+
+        # for each descriptor in the query, find the closest match
+        matches = flann.match(queryDescriptors=img['descriptors'])
+
+        return matches
 
     def kNNMatch(self, img1, img2, lowes_thresh=0.75):
         kp1, des1 = img1['keypoints'], img1['descriptors']
@@ -100,24 +136,74 @@ class SFM(object):
 
             ''' Triangulation '''
             points_3d = self.triangulatePoints(P1, P2, points1, points2)
+            # ids of the matches used
+            points_idx = [x.queryIdx for x in matches]
 
-            self.img_data[0]['extrinsic'] = P1
-            self.img_data[1]['extrinsic'] = P2
+            self.img_data[0]['pose'] = P1
+            self.img_data[1]['pose'] = P2
 
-            colors = self.get_point_colors_from_img(img1, matches)
+            colors = self.get_point_colors_from_img(img1, points1)
 
-            return points_3d, colors
+            point_cloud_data = {'points': points_3d,
+                                'point_img_corresp': points_idx,
+                                'colors': colors}
+
+            return [point_cloud_data]
+
+    def estimate_new_view_pose(self, img):
+        print('New pose estimation')
+        keypoints = []
+        descriptors = []
+        for img in self.img_data[:self.imgs_used]:
+            keypoints.append(img['keypoints'])
+            descriptors.append(img['descriptors'])
+
+        matches = self.trainFlannMatch(img, descriptors)
+
+        # 3d Points
+        points_3d = []
+        points_2d = []
+        for m in matches:
+            # clouds are made of image pairs so (0,1) -> cloud_idx:0 (1,2) -> cloud_idx:1, ...
+            cloud_idx = 0
+            if m.imgIdx != 0:
+                cloud_idx = m.imgIdx-1
+
+            pointIdx = np.searchsorted(self.point_cloud[cloud_idx]['point_img_corresp'], m.trainIdx)
+            if pointIdx == len(self.point_cloud[cloud_idx]['point_img_corresp']):
+                continue
+
+            # Get the 3d Point corresponding to the train image keypoint
+            points_3d.append(self.point_cloud[cloud_idx]['points'][pointIdx])
+
+            # 2d Points
+            x_coords = int(img['keypoints'][m.queryIdx].pt[0])
+            y_coords = int(img['keypoints'][m.queryIdx].pt[1])
+            points_2d.append([x_coords, y_coords])
+
+
+        # estimate camera pose from 3d2d Correspondences
+        _, rvec, tvec, inliers = cv.solvePnPRansac(
+                            np.array(points_3d, dtype=np.float64),
+                            np.array(points_2d, dtype=np.float64),
+                            self.K, distCoeffs=self.distCoeffs, flags=cv.SOLVEPNP_ITERATIVE)
+
+        cam_rmat, _ = cv.Rodrigues(rvec)
+        camera_pose = np.concatenate([cam_rmat, tvec], axis=1)
+        return camera_pose
 
 
     def get_point_colors_from_img(self, img, matches):
-        x_coords = [int(img['keypoints'][x.queryIdx].pt[0]) for x in matches]
-        y_coords = [int(img['keypoints'][x.queryIdx].pt[1]) for x in matches]
+        # x_coords = [int(img['keypoints'][x.queryIdx].pt[0]) for x in matches]
+        # y_coords = [int(img['keypoints'][x.queryIdx].pt[1]) for x in matches]
+        x_coords = [int(x[0]) for x in matches]
+        y_coords = [int(x[1]) for x in matches]
         image_coords = np.column_stack([x_coords, y_coords])
         colors = img['pixels'][y_coords, x_coords, :]
         return colors
 
 
-    def write_ply(self, coords, colors, filename):
+    def write_ply(self, point_cloud):
         ply_header = (
                     '''ply
                     format ascii 1.0
@@ -131,10 +217,15 @@ class SFM(object):
                     end_header
                     '''
                     )
-        points = np.hstack([coords, colors])
-        with open(filename, 'w') as outfile:
-            #outfile.write(ply_header.format(vertex_count=len(coords)))
-            np.savetxt(outfile, points, '%f %f %f %d %d %d')
+        for i, pc in enumerate(point_cloud):
+            coords = pc['points']
+            colors = pc['colors']
+            filename = 'meshes/mesh{}.ply'.format(i)
+
+            points = np.hstack([coords, colors])
+            with open(filename, 'w') as outfile:
+                #outfile.write(ply_header.format(vertex_count=len(coords)))
+                np.savetxt(outfile, points, '%f %f %f %d %d %d')
 
 if __name__  == '__main__':
 
