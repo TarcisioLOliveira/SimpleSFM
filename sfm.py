@@ -69,8 +69,8 @@ class SFM(object):
 
         # for each descriptor in the query, find the closest match
         matches = flann.match(queryDescriptors=img['descriptors'])
-
-        return matches
+        matches = sorted(matches, key= lambda x:x.distance)
+        return matches[:30]
 
     def kNNMatch(self, img1, img2, lowes_thresh=0.75):
         kp1, des1 = img1['keypoints'], img1['descriptors']
@@ -152,11 +152,10 @@ class SFM(object):
 
     def estimate_new_view_pose(self, img):
         print('New pose estimation')
-        keypoints = []
-        descriptors = []
-        for img in self.img_data[:self.imgs_used]:
-            keypoints.append(img['keypoints'])
-            descriptors.append(img['descriptors'])
+        descriptors = [uImg['descriptors']
+                       for uImg in self.img_data[:self.imgs_used]]
+        # for uImg in self.img_data[:self.imgs_used]:
+        #     descriptors.append(uImg['descriptors'])
 
         matches = self.trainFlannMatch(img, descriptors)
 
@@ -186,7 +185,9 @@ class SFM(object):
         _, rvec, tvec, inliers = cv.solvePnPRansac(
                             np.array(points_3d, dtype=np.float64),
                             np.array(points_2d, dtype=np.float64),
-                            self.K, distCoeffs=self.distCoeffs, flags=cv.SOLVEPNP_ITERATIVE)
+                            self.K, None, confidence=0.99,
+                            flags=cv.SOLVEPNP_EPNP,
+                            reprojectionError=8.)
 
         cam_rmat, _ = cv.Rodrigues(rvec)
         camera_pose = np.concatenate([cam_rmat, tvec], axis=1)
