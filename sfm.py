@@ -5,6 +5,7 @@ from matplotlib import pyplot as plt
 from pathlib2 import Path
 import os
 import sys
+from bundle_adj import adjust
 
 def undistort(img, mtx, dist):
     h, w = img.shape[:2]
@@ -109,6 +110,12 @@ def SfM(img_path_list, K, distCoeffs = 0, pointCloud=[], cameraPoses=[], MIN_MAT
     img1 = cv.imread(img_path_list[0], 1) # trainImage
     P1 = np.column_stack([np.eye(3), np.zeros(3)])
 
+    points2d_list = []
+    camera_ind = np.full(len(img_path_list), 0, dtype=int)
+    n_cameras = 1
+    color_list = []
+    pointCloud = np.array(pointCloud)
+
     for i, img_path in enumerate(img_path_list[1:]):
         img2 = cv.imread(img_path, 1) # queryImage
 
@@ -130,18 +137,26 @@ def SfM(img_path_list, K, distCoeffs = 0, pointCloud=[], cameraPoses=[], MIN_MAT
             P2 = np.concatenate((R, t), axis=1)
 
             ''' Triangulation '''
-            point_4d_hom = cv.triangulatePoints(np.dot(K,P1), np.dot(K,P2), pts1_norm, pts2_norm)
+            # point_4d_hom = cv.triangulatePoints(np.dot(K,P1), np.dot(K,P2), pts1_norm, pts2_norm)
+            point_4d_hom = cv.triangulatePoints(P1, P2, pts1_norm, pts2_norm)
             # point_4d_hom = cv.triangulatePoints(P1, P2, np.expand_dims(points1, axis=1), np.expand_dims(points2, axis=1))
             point_4d = point_4d_hom / np.tile(point_4d_hom[-1, :], (4, 1))
             point_3d = point_4d[:3, :].T
-            pointCloud.append(point_3d)
+            if pointCloud.size > 0:
+                pointCloud = np.concatenate((pointCloud, point_3d), axis=0)
+            else:
+                pointCloud = point_3d
 
             ''' Point Cloud '''
             x_coords = [int(kp1[x.queryIdx].pt[0]) for x in matches]
             y_coords = [int(kp1[x.queryIdx].pt[1]) for x in matches]
             image_coords = np.column_stack([x_coords, y_coords])
+            if len(points2d_list) > 0:
+                points2d_list = np.concatenate((points2d_list, image_coords), axis=0)
+            else:
+                points2d_list = image_coords
             colors = img1[y_coords, x_coords, :]
-            write_ply(point_3d, colors, "meshes/mesh"+str(i)+".ply")
+            color_list.append(colors)
 
             '''Camera Pose from 2D3DMatch'''
             _, rvec, tvec, inliers = cv.solvePnPRansac(
@@ -158,6 +173,13 @@ def SfM(img_path_list, K, distCoeffs = 0, pointCloud=[], cameraPoses=[], MIN_MAT
         else:
             print("Not enough matches: "+str(len(matches))+"/"+str(MIN_MATCH_COUNT))
 
+
+    point_indices = np.indices((1, len(pointCloud)))[1, 0, :]
+    res = adjust(K, pointCloud, n_cameras, len(pointCloud), np.array(camera_ind), point_indices, points2d_list)
+    print(res)
+
+    write_ply(pointCloud, np.array(color_list), "meshes/mesh.ply")
+
 if __name__  == '__main__':
     #camera_data = np.load("calibration_data.npz")
     #K = camera_data['intrinsic_matrix']
@@ -169,19 +191,19 @@ if __name__  == '__main__':
 
     if not os.path.isdir("./meshes"):
         os.mkdir("meshes")
-# [[3.14063466e+03 0.00000000e+00 1.63150000e+03]
-#  [0.00000000e+00 3.14063466e+03 1.22350000e+03]
-#  [0.00000000e+00 0.00000000e+00 1.00000000e+00]]
+    # [[3.14063466e+03 0.00000000e+00 1.63150000e+03]
+    #  [0.00000000e+00 3.14063466e+03 1.22350000e+03]
+    #  [0.00000000e+00 0.00000000e+00 1.00000000e+00]]
     K = np.array([[3140.63, 0, 1631.5],
-         [0, 3140.63, 1223.5],
-         [0, 0, 1]])
+                  [0, 3140.63, 1223.5],
+                  [0, 0, 1]])
     # f = 2500.0
     # width = 1024.0
     # height = 768.0
     # K = np.array([[f,0,width/2],
     #               [0,f,height/2],
     #               [0,0,1]])
-    path = Path('./data/berlin/images')
+    path = Path('./data/crazyhorse')
     img_path_list = sorted([str(x) for x in path.iterdir()])
     SfM(img_path_list, K)#, distCoeffs=distCoeffs)
     #cv.imwrite("test0.png", undistort(img2, mtx, dist))
