@@ -4,6 +4,7 @@ from matplotlib import pyplot as plt
 from pathlib2 import Path
 import os
 import sys
+from bundle_adj import adjust
 
 class SFM(object):
     def __init__(self, instrinsic, images_path):
@@ -33,8 +34,11 @@ class SFM(object):
                                 'colors': colors}
 
             self.point_cloud.append(point_cloud_data)
-            #self.bundle_adjust
+            camera_idx = np.full((len(points3d)), 0)
+            res = adjust(self.K, point_cloud[:]['points'], n_cameras, len(point_cloud), camera_idx, points_idx, points2)
+            print(res)
             self.imgs_used += 1
+
 
         self.write_ply(self.point_cloud)
 
@@ -238,6 +242,21 @@ if __name__  == '__main__':
                   [0,       0,       1]])
 
     path = Path('./data/fountain-P11/images')
+
+    # [[3.14063466e+03 0.00000000e+00 1.63150000e+03]
+    #  [0.00000000e+00 3.14063466e+03 1.22350000e+03]
+    #  [0.00000000e+00 0.00000000e+00 1.00000000e+00]]
+    K = np.array([[3140.63, 0, 1631.5],
+                  [0, 3140.63, 1223.5],
+                  [0, 0, 1]])
+    # f = 2500.0
+    # width = 1024.0
+    # height = 768.0
+    # K = np.array([[f,0,width/2],
+    #               [0,f,height/2],
+    #               [0,0,1]])
+    path = Path('./data/crazyhorse')
+
     img_path_list = sorted([str(x) for x in path.iterdir()])
 
     sfm_pipeline = SFM(K, img_path_list)
