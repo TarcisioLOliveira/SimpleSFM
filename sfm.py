@@ -1,3 +1,4 @@
+#!/usr/bin/python
 import numpy as np
 import cv2 as cv
 from matplotlib import pyplot as plt
@@ -16,6 +17,7 @@ class SFM(object):
         self.img_data = self.read_and_compute_keypoints(img_path_list)
         self.point_cloud = self.compute_initial_cloud(self.img_data[0], self.img_data[1])
         self.imgs_used = 2
+        n_cameras = 1
 
         for img in self.img_data[2:]:
             camera_pose = self.estimate_new_view_pose(img)
@@ -29,14 +31,17 @@ class SFM(object):
             self.img_data[self.imgs_used]['pose'] = camera_pose
             colors = self.get_point_colors_from_img(img, points1)
 
+            camera_idx = np.full((len(points_3d)), 0, dtype=int)
+            res = adjust(self.K, points_3d, n_cameras, len(points_3d), camera_idx, np.array(points_idx), points2)
+            res = res.reshape((2, len(res)/2))
+            points_3d = np.array((res[0, :], points_3d[:, 1], res[1, :])).T
+            print points_3d
+
             point_cloud_data = {'points': points_3d,
                                 'point_img_corresp': points_idx,
                                 'colors': colors}
 
             self.point_cloud.append(point_cloud_data)
-            camera_idx = np.full((len(points3d)), 0)
-            res = adjust(self.K, point_cloud[:]['points'], n_cameras, len(point_cloud), camera_idx, points_idx, points2)
-            print(res)
             self.imgs_used += 1
 
 
@@ -237,18 +242,16 @@ if __name__  == '__main__':
     if not os.path.isdir("./meshes"):
         os.mkdir("meshes")
 
-    K = np.array([[2759.48, 0,       1520.69],
-                  [0,       2764.16, 1006.81],
-                  [0,       0,       1]])
+    # K = np.array([[2759.48, 0,       1520.69],
+    #               [0,       2764.16, 1006.81],
+    #               [0,       0,       1]])
 
-    path = Path('./data/fountain-P11/images')
+    # path = Path('./data/fountain-P11/images')
 
-    # [[3.14063466e+03 0.00000000e+00 1.63150000e+03]
-    #  [0.00000000e+00 3.14063466e+03 1.22350000e+03]
-    #  [0.00000000e+00 0.00000000e+00 1.00000000e+00]]
     K = np.array([[3140.63, 0, 1631.5],
                   [0, 3140.63, 1223.5],
                   [0, 0, 1]])
+
     # f = 2500.0
     # width = 1024.0
     # height = 768.0

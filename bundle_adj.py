@@ -30,14 +30,14 @@ def project(points, camera_params):
     points_proj *= (r * f)[:, np.newaxis]
     return points_proj
 
-def fun(params, n_cameras, n_points, camera_indices, point_indices, points_2d):
+def fun(params, n_cameras, n_points, camera_indices, points_2d):
     """Compute residuals.
 
     `params` contains camera parameters and 3-D coordinates.
     """
     camera_params = params[:n_cameras*9].reshape((n_cameras, 9))
     points_3d = params[n_cameras*9:].reshape((n_points, 3))
-    points_proj = project(points_3d[point_indices], camera_params[camera_indices])
+    points_proj = project(points_3d, camera_params[camera_indices])
     return (points_proj - points_2d).ravel()
 
 def bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices):
@@ -53,10 +53,10 @@ def bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indice
         A[2 * i, camera_indices * 9 + s] = 1
         A[2 * i + 1, camera_indices * 9 + s] = 1
 
-    for s in range(3):
-        for j in point_indices:
-            A[2 * i, n_cameras * 9 + j * 3 + s] = 1
-            A[2 * i + 1, n_cameras * 9 + j * 3 + s] = 1
+    #for j in point_indices:
+        for s in range(3):
+            A[2 * i, n_cameras * 9 + point_indices * 3 + s] = 1
+            A[2 * i + 1, n_cameras * 9 + point_indices * 3 + s] = 1
 
     return A
 
@@ -64,8 +64,9 @@ def adjust(camera_params, points_3d, n_cameras, n_points, camera_indices, point_
     x0 = np.hstack((camera_params.ravel(), points_3d.ravel()))
     # print fun(x0, n_cameras, n_points, camera_indices, point_indices, points_2d).size
     # print x0.size
-    A = bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices)
-    res = least_squares(fun, x0, jac_sparsity=A, verbose=2, x_scale='jac', ftol=1e-4, method='trf',
-                        args=(n_cameras, n_points, camera_indices, point_indices, points_2d))
+    #A = bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices)
+    #res = least_squares(fun, x0, jac_sparsity=A, verbose=2, x_scale='jac', ftol=1e-4, method='trf',
+    #                    args=(n_cameras, n_points, camera_indices, point_indices, points_2d))
+    res = fun(x0, n_cameras, n_points, camera_indices, points_2d)
 
     return res
