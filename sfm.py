@@ -29,23 +29,40 @@ class SFM(object):
 
             points_idx = [x.queryIdx for x in matches]
             self.img_data[self.imgs_used]['pose'] = camera_pose
-            colors = self.get_point_colors_from_img(img, points1)
+            points_2d, colors = self.get_2dpoints_and_colors_from_img(img, points1)
+            self.imgs_used += 1
 
-            camera_idx = np.full((len(points_3d)), 0, dtype=int)
-            res = adjust(self.K, points_3d, n_cameras, len(points_3d), camera_idx, np.array(points_idx), points2)
-            res = res.reshape((2, len(res)/2))
-            points_3d = np.array((res[0, :], points_3d[:, 1], res[1, :])).T
-            print points_3d
-
-            point_cloud_data = {'points': points_3d,
+            point_cloud_data = {'3dpoints': points_3d,
+                                '2dpoints': points_2d,
                                 'point_img_corresp': points_idx,
                                 'colors': colors}
 
             self.point_cloud.append(point_cloud_data)
-            self.imgs_used += 1
+
+            # BA
+            all_points3d = []
+            all_points2d = []
+            cam_idxs = []
+            for c_idx, p in enumerate(self.point_cloud):
+                all_points3d.extend(p['3dpoints'])
+                all_points2d.extend(p['2dpoints'])
+                cam_idxs.extend([c_idx for _ in range(len(p['3dpoints']))])
+
+            camera_params = [self.get_cam_params(c['pose'])
+                    for c in self.img_data[:self.imgs_used]]
+
+            res = adjust(np.array(camera_params), np.array(all_points3d), len(camera_params), len(all_points3d),
+                        cam_idxs, np.array(all_points2d))
 
 
         self.write_ply(self.point_cloud)
+
+    def get_cam_params(self, pose):
+        rot, _ = cv.Rodrigues(pose[0:3,0:3])
+        trans = pose[:,3]
+        # focal dist, distor1, distor2
+        intr = [3.5, 0, 0]
+        return np.ravel([rot.T[0], trans, intr])
 
     def read_and_compute_keypoints(self, img_path_list):
         img_data = []
@@ -151,9 +168,10 @@ class SFM(object):
             self.img_data[0]['pose'] = P1
             self.img_data[1]['pose'] = P2
 
-            colors = self.get_point_colors_from_img(img1, points1)
+            points_2d, colors = self.get_2dpoints_and_colors_from_img(img1, points1)
 
-            point_cloud_data = {'points': points_3d,
+            point_cloud_data = {'3dpoints': points_3d,
+                                '2dpoints': points_2d,
                                 'point_img_corresp': points_idx,
                                 'colors': colors}
 
@@ -182,7 +200,7 @@ class SFM(object):
                 continue
 
             # Get the 3d Point corresponding to the train image keypoint
-            points_3d.append(self.point_cloud[cloud_idx]['points'][pointIdx])
+            points_3d.append(self.point_cloud[cloud_idx]['3dpoints'][pointIdx])
 
             # 2d Points
             x_coords = int(img['keypoints'][m.queryIdx].pt[0])
@@ -203,14 +221,14 @@ class SFM(object):
         return camera_pose
 
 
-    def get_point_colors_from_img(self, img, matches):
+    def get_2dpoints_and_colors_from_img(self, img, matches):
         # x_coords = [int(img['keypoints'][x.queryIdx].pt[0]) for x in matches]
         # y_coords = [int(img['keypoints'][x.queryIdx].pt[1]) for x in matches]
         x_coords = [int(x[0]) for x in matches]
         y_coords = [int(x[1]) for x in matches]
         image_coords = np.column_stack([x_coords, y_coords])
         colors = img['pixels'][y_coords, x_coords, :]
-        return colors
+        return image_coords, colors
 
 
     def write_ply(self, point_cloud):
@@ -228,7 +246,7 @@ class SFM(object):
                     '''
                     )
         for i, pc in enumerate(point_cloud):
-            coords = pc['points']
+            coords = pc['3dpoints']
             colors = pc['colors']
             filename = 'meshes/mesh{}.ply'.format(i)
 
@@ -245,13 +263,13 @@ if __name__  == '__main__':
     # K = np.array([[2759.48, 0,       1520.69],
     #               [0,       2764.16, 1006.81],
     #               [0,       0,       1]])
-
+    #
     # path = Path('./data/fountain-P11/images')
 
     K = np.array([[3140.63, 0, 1631.5],
                   [0, 3140.63, 1223.5],
                   [0, 0, 1]])
-
+    #
     # f = 2500.0
     # width = 1024.0
     # height = 768.0
@@ -259,7 +277,7 @@ if __name__  == '__main__':
     #               [0,f,height/2],
     #               [0,0,1]])
     path = Path('./data/crazyhorse')
-
+    #
     img_path_list = sorted([str(x) for x in path.iterdir()])
 
     sfm_pipeline = SFM(K, img_path_list)

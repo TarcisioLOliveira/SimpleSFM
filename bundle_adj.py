@@ -45,9 +45,6 @@ def bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indice
     n = n_cameras * 9 + n_points * 3
     A = lil_matrix((m, n), dtype=int)
 
-    print m
-    print n
-
     i = np.arange(camera_indices.size)
     for s in range(9):
         A[2 * i, camera_indices * 9 + s] = 1
@@ -60,13 +57,21 @@ def bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indice
 
     return A
 
-def adjust(camera_params, points_3d, n_cameras, n_points, camera_indices, point_indices, points_2d):
-    x0 = np.hstack((camera_params.ravel(), points_3d.ravel()))
-    # print fun(x0, n_cameras, n_points, camera_indices, point_indices, points_2d).size
-    # print x0.size
-    #A = bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices)
-    #res = least_squares(fun, x0, jac_sparsity=A, verbose=2, x_scale='jac', ftol=1e-4, method='trf',
-    #                    args=(n_cameras, n_points, camera_indices, point_indices, points_2d))
-    res = fun(x0, n_cameras, n_points, camera_indices, points_2d)
+def adjust(camera_params, points_3d, n_cameras, n_points, camera_indices, points_2d):
+    flat_cam_params = camera_params.ravel()
+    flat_points3d = points_3d.ravel()
 
-    return res
+    print(flat_cam_params.shape)
+    print(flat_points3d.shape)
+    x0 = np.hstack((flat_cam_params, flat_points3d))
+    print(x0[0])
+    print(x0.shape)
+    exit()
+    opt_result = least_squares(fun, x0, verbose=2, x_scale='jac', tr_solver='lsmr',
+                        ftol=1e-4, method='trf',
+                        args=(n_cameras, n_points, camera_indices, points_2d))
+
+    x = opt_result.x
+    print(x.shape)
+    exit()
+    return
