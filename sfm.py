@@ -8,8 +8,8 @@ import sys
 from bundle_adj import adjust
 
 class SFM(object):
-    def __init__(self, instrinsic, images_path):
-        self.distCoeffs = 0
+    def __init__(self, instrinsic, images_path, distCoeffs = 0):
+        self.distCoeffs = distCoeffs
         self.MIN_MATCH_COUNT=10
         self.K = instrinsic
 
@@ -29,6 +29,7 @@ class SFM(object):
 
             points_idx = [x.queryIdx for x in matches]
             self.img_data[self.imgs_used]['pose'] = camera_pose
+
             points_2d, colors = self.get_2dpoints_and_colors_from_img(img, points1)
             self.imgs_used += 1
 
@@ -39,21 +40,32 @@ class SFM(object):
 
             self.point_cloud.append(point_cloud_data)
 
-            # BA
-            all_points3d = []
-            all_points2d = []
-            cam_idxs = []
-            for c_idx, p in enumerate(self.point_cloud):
-                all_points3d.extend(p['3dpoints'])
-                all_points2d.extend(p['2dpoints'])
-                cam_idxs.extend([c_idx for _ in range(len(p['3dpoints']))])
+        # BA
+        print("Adjusting...")
+        all_points3d = []
+        all_points2d = []
+        cam_idxs = []
+        for c_idx, p in enumerate(self.point_cloud):
+            all_points3d.extend(p['3dpoints'])
+            all_points2d.extend(p['2dpoints'])
+            cam_idxs.extend([c_idx for _ in range(len(p['3dpoints']))])
 
-            camera_params = [self.get_cam_params(c['pose'])
-                    for c in self.img_data[:self.imgs_used]]
+        camera_params = [self.get_cam_params(c['pose'])
+                for c in self.img_data[:self.imgs_used]]
 
-            res = adjust(np.array(camera_params), np.array(all_points3d), len(camera_params), len(all_points3d),
-                        cam_idxs, np.array(all_points2d))
 
+        res = adjust(np.array(camera_params), np.array(all_points3d), len(camera_params), len(all_points3d),
+                    cam_idxs, np.array(all_points2d))
+
+        points_3d_flat = res[n_cameras*9:]
+
+        points_3d = points_3d_flat.reshape((points_3d_flat/3, 3))
+
+        end_pos = 0
+        for idx, p in enumerate(self.point_cloud):
+            size = len(p['3dpoints'])
+            self.point_cloud[idx]['3dpoints'] = points_3d[end_pos:end_pos+size, :]
+            end_pos = end_pos+size
 
         self.write_ply(self.point_cloud)
 
@@ -266,9 +278,6 @@ if __name__  == '__main__':
     #
     # path = Path('./data/fountain-P11/images')
 
-    K = np.array([[3140.63, 0, 1631.5],
-                  [0, 3140.63, 1223.5],
-                  [0, 0, 1]])
     #
     # f = 2500.0
     # width = 1024.0
@@ -276,8 +285,22 @@ if __name__  == '__main__':
     # K = np.array([[f,0,width/2],
     #               [0,f,height/2],
     #               [0,0,1]])
+
+    K = np.array([[3140.63, 0, 1631.5],
+                  [0, 3140.63, 1223.5],
+                  [0, 0, 1]])
+
     path = Path('./data/crazyhorse')
-    #
+
+    # K = np.array([[3140.63, 0, 1631.5],
+    #               [0, 3140.63, 1223.5],
+    #               [0, 0, 1]])
+
+    # path = Path('./images')
+    # camera = np.load('./calibration_data.npz')
+    # K = camera['intrinsic_matrix']
+    # distCoeffs = camera['distCoeff']
+
     img_path_list = sorted([str(x) for x in path.iterdir()])
 
     sfm_pipeline = SFM(K, img_path_list)
