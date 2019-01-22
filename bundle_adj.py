@@ -11,11 +11,11 @@ def rotate(points, rot_vecs):
     with np.errstate(invalid='ignore'):
         v = rot_vecs / theta
         v = np.nan_to_num(v)
-    dot = points.dot(v.T)
+    dot = np.sum(points * v, axis=1)[:, np.newaxis]
     cos_theta = np.cos(theta)
     sin_theta = np.sin(theta)
 
-    return cos_theta * points + sin_theta * np.cross(v, points) + (1 - cos_theta) * dot.dot(v)
+    return cos_theta * points + sin_theta * np.cross(v, points) + (1 - cos_theta) * dot * v
 
 def project(points, camera_params):
     """Convert 3-D points to 2-D by projecting onto images."""
