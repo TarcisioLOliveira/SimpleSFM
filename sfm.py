@@ -15,7 +15,7 @@ class SFM(object):
 
         img_path_list = sorted([str(x) for x in path.iterdir()])
         self.img_data = self.read_and_compute_keypoints(img_path_list)
-        self.point_cloud = self.compute_initial_cloud(self.img_data[0], self.img_data[1])
+        self.point_cloud = self.compute_initial_cloud(self.img_data[0], self.img_data[1], K, K)
         self.imgs_used = 2
         n_cameras = 1
 
@@ -158,7 +158,7 @@ class SFM(object):
         points_3d = points_4d[:3, :].T
         return points_3d
 
-    def compute_initial_cloud(self, img1, img2):
+    def compute_initial_cloud(self, img1, img2, K1, K2):
             ''' Keypoint Matching '''
             points1, points2, matches = self.kNNMatch(img1, img2)
 
@@ -169,8 +169,8 @@ class SFM(object):
             ''' Param Estimation '''
             R, t = self.findDecomposedEssentialMatrix(points1, points2)
 
-            P1 = np.column_stack([np.eye(3), np.zeros(3)])
-            P2 = np.hstack((R, t))
+            P1 = K1*np.column_stack([np.eye(3), np.zeros(3)])
+            P2 = K2*np.hstack((R, t))
 
             ''' Triangulation '''
             points_3d = self.triangulatePoints(P1, P2, points1, points2)
