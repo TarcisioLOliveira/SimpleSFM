@@ -5,7 +5,7 @@ from matplotlib import pyplot as plt
 from pathlib2 import Path
 import os
 import sys
-from bundle_adj import adjust
+from bundle_adj2 import adjust
 
 class SFM(object):
     def __init__(self, instrinsic, images_path, distCoeffs = 0):
@@ -15,7 +15,7 @@ class SFM(object):
 
         img_path_list = sorted([str(x) for x in path.iterdir()])
         self.img_data = self.read_and_compute_keypoints(img_path_list)
-        self.point_cloud = self.compute_initial_cloud(self.img_data[0], self.img_data[1])
+        self.point_cloud = self.compute_initial_cloud(self.img_data[0], self.img_data[1], K, K)
         self.imgs_used = 2
         n_cameras = 1
 
@@ -42,30 +42,32 @@ class SFM(object):
 
         # BA
         print("Adjusting...")
-        all_points3d = []
-        all_points2d = []
-        cam_idxs = []
-        for c_idx, p in enumerate(self.point_cloud):
-            all_points3d.extend(p['3dpoints'])
-            all_points2d.extend(p['2dpoints'])
-            cam_idxs.extend([c_idx for _ in range(len(p['3dpoints']))])
+        # all_points3d = []
+        # all_points2d = []
+        # cam_idxs = []
+        # for c_idx, p in enumerate(self.point_cloud):
+        #     all_points3d.extend(p['3dpoints'])
+        #     all_points2d.extend(p['2dpoints'])
+        #     cam_idxs.extend([c_idx for _ in range(len(p['3dpoints']))])
 
-        camera_params = [self.get_cam_params(c['pose'])
-                for c in self.img_data[:self.imgs_used]]
+        # camera_params = [self.get_cam_params(c['pose'])
+        #         for c in self.img_data[:self.imgs_used]]
 
 
-        res = adjust(np.array(camera_params), np.array(all_points3d), len(camera_params), len(all_points3d),
-                    cam_idxs, np.array(all_points2d))
+        # res = adjust(np.array(camera_params), np.array(all_points3d), len(camera_params), len(all_points3d),
+        #             cam_idxs, np.array(all_points2d))
 
-        points_3d_flat = res[n_cameras*9:]
+        # points_3d_flat = res[n_cameras*9:]
 
-        points_3d = points_3d_flat.reshape((points_3d_flat/3, 3))
+        # points_3d = points_3d_flat.reshape((points_3d_flat/3, 3))
 
-        end_pos = 0
-        for idx, p in enumerate(self.point_cloud):
-            size = len(p['3dpoints'])
-            self.point_cloud[idx]['3dpoints'] = points_3d[end_pos:end_pos+size, :]
-            end_pos = end_pos+size
+        # end_pos = 0
+        # for idx, p in enumerate(self.point_cloud):
+        #     size = len(p['3dpoints'])
+        #     self.point_cloud[idx]['3dpoints'] = points_3d[end_pos:end_pos+size, :]
+        #     end_pos = end_pos+size
+
+        all_points3d = adjust(self.point_cloud, K, [data['pose'] for data in self.img_data], self.imgs_used)
 
         self.write_ply(self.point_cloud)
 
@@ -158,7 +160,7 @@ class SFM(object):
         points_3d = points_4d[:3, :].T
         return points_3d
 
-    def compute_initial_cloud(self, img1, img2):
+    def compute_initial_cloud(self, img1, img2, K1, K2):
             ''' Keypoint Matching '''
             points1, points2, matches = self.kNNMatch(img1, img2)
 
@@ -171,11 +173,9 @@ class SFM(object):
 
             P1 = np.column_stack([np.eye(3), np.zeros(3)])
             P2 = np.hstack((R, t))
-            print(P1)
-            print(P2)
 
             ''' Triangulation '''
-            points_3d = self.triangulatePoints(P1, P2, points1, points2)
+            points_3d = self.triangulatePoints(np.dot(K1, P1), np.dot(K2, P2), points1, points2)
             # ids of the matches used
             points_idx = [x.queryIdx for x in matches]
 
