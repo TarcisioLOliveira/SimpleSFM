@@ -15,7 +15,7 @@ class SFM(object):
 
         img_path_list = sorted([str(x) for x in path.iterdir()])
         self.img_data = self.read_and_compute_keypoints(img_path_list)
-        self.point_cloud = self.compute_initial_cloud(self.img_data[0], self.img_data[1], K, K)
+        self.point_cloud = self.compute_initial_cloud(self.img_data[0], self.img_data[1])
         self.imgs_used = 2
         n_cameras = 1
 
@@ -24,7 +24,7 @@ class SFM(object):
             prev_img_idx = self.imgs_used - 1
 
             points1, points2, matches = self.kNNMatch(self.img_data[prev_img_idx], img)
-            points_3d = self.triangulatePoints(np.dot(self.K, self.img_data[prev_img_idx]['pose']), np.dot(self.K, camera_pose),
+            points_3d = self.triangulatePoints(self.img_data[prev_img_idx]['pose'], camera_pose,
                                                points1, points2)
 
             points_idx = [x.queryIdx for x in matches]
@@ -41,14 +41,13 @@ class SFM(object):
             self.point_cloud.append(point_cloud_data)
 
         # BA
-        print("Adjusting...")
-        # all_points3d = []
-        # all_points2d = []
-        # cam_idxs = []
-        # for c_idx, p in enumerate(self.point_cloud):
-        #     all_points3d.extend(p['3dpoints'])
-        #     all_points2d.extend(p['2dpoints'])
-        #     cam_idxs.extend([c_idx for _ in range(len(p['3dpoints']))])
+        all_points3d = []
+        all_points2d = []
+        cam_idxs = []
+        for c_idx, p in enumerate(self.point_cloud):
+            all_points3d.extend(p['3dpoints'])
+            all_points2d.extend(p['2dpoints'])
+            cam_idxs.extend([c_idx for _ in range(len(p['3dpoints']))])
 
         # camera_params = [self.get_cam_params(c['pose'])
         #         for c in self.img_data[:self.imgs_used]]
@@ -67,9 +66,13 @@ class SFM(object):
         #     self.point_cloud[idx]['3dpoints'] = points_3d[end_pos:end_pos+size, :]
         #     end_pos = end_pos+size
 
-        all_points3d = adjust(self.point_cloud, K, [data['pose'] for data in self.img_data], self.imgs_used)
+        print("Adjusting...")
+        [_, dx_p, point_list, color_list] = adjust(self.point_cloud, K, [data['pose'] for data in self.img_data], self.imgs_used)
+        dx_p = dx_p.reshape((-1, 3))
+        point_list = point_list + dx_p
 
-        self.write_ply(self.point_cloud)
+        self.write_ply(point_list, color_list)
+        #self.write_ply(all_points3d, color_list)
 
     def get_cam_params(self, pose):
         rot, _ = cv.Rodrigues(pose[0:3,0:3])
@@ -160,7 +163,7 @@ class SFM(object):
         points_3d = points_4d[:3, :].T
         return points_3d
 
-    def compute_initial_cloud(self, img1, img2, K1, K2):
+    def compute_initial_cloud(self, img1, img2):
             ''' Keypoint Matching '''
             points1, points2, matches = self.kNNMatch(img1, img2)
 
@@ -175,7 +178,7 @@ class SFM(object):
             P2 = np.hstack((R, t))
 
             ''' Triangulation '''
-            points_3d = self.triangulatePoints(np.dot(K1, P1), np.dot(K2, P2), points1, points2)
+            points_3d = self.triangulatePoints(P1, P2, points1, points2)
             # ids of the matches used
             points_idx = [x.queryIdx for x in matches]
 
@@ -245,29 +248,26 @@ class SFM(object):
         return image_coords, colors
 
 
-    def write_ply(self, point_cloud):
-        ply_header = (
-                    '''ply
-                    format ascii 1.0
-                    element vertex {vertex_count}
-                    property float x
-                    property float y
-                    property float z
-                    property uchar red
-                    property uchar green
-                    property uchar blue
-                    end_header
-                    '''
-                    )
-        for i, pc in enumerate(point_cloud):
-            coords = pc['3dpoints']
-            colors = pc['colors']
-            filename = 'meshes/mesh{}.ply'.format(i)
+    def write_ply(self, points, colors):
+        #ply_header = (
+        #            '''ply
+        #            format ascii 1.0
+        #            element vertex {vertex_count}
+        #            property float x
+        #            property float y
+        #            property float z
+        #            property uchar red
+        #            property uchar green
+        #            property uchar blue
+        #            end_header
+        #            '''
+        #            )
+        filename = 'meshes/mesh.ply'
 
-            points = np.hstack([coords, colors])
-            with open(filename, 'w') as outfile:
-                #outfile.write(ply_header.format(vertex_count=len(coords)))
-                np.savetxt(outfile, points, '%f %f %f %d %d %d')
+        points = np.hstack([points, colors])
+        with open(filename, 'w') as outfile:
+            #outfile.write(ply_header.format(vertex_count=len(coords)))
+            np.savetxt(outfile, points, '%f %f %f %d %d %d')
 
 if __name__  == '__main__':
 

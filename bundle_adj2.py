@@ -1,5 +1,12 @@
 import numpy as np
 import scipy.sparse
+import sys
+from scipy.sparse import linalg
+from scipy.linalg import interpolative
+
+def rank(A):
+    u, s, v = scipy.sparse.linalg.svds(A)
+    rank = np.sum(s > 1e-10)
 
 def sqrt(x):
     return x**0.5
@@ -128,22 +135,22 @@ def adjust(point_cloud_data, K, poses, n_images):
     n_points = 0
     all_3dpoints = []
     for data in point_cloud_data:
-        n_points += len(data['3dpoints'])
-        for p in data['3dpoints']:
-            all_3dpoints.append(p)
+        all_3dpoints.extend(data['3dpoints'])
 
     list_3dpoints = map(np.unique, all_3dpoints)
+    list_colors = []
+    n_points = len(list_3dpoints)
     J_rows = n_points*2
-    J_cols = n_images*7 + n_points*3
-    J = scipy.sparse.coo_matrix((J_rows, J_cols), dtype=np.float32)
-    J = scipy.sparse.lil_matrix(J)
+    J_ccols = n_images*7
+    J_pcols = n_points*3
+    J_c = scipy.sparse.dok_matrix((J_rows, J_ccols), dtype=np.float64)
+    J_p = scipy.sparse.dok_matrix((J_rows, J_pcols), dtype=np.float64)
     e = np.zeros((J_rows, 1))
-
-    X_col_start = n_images*7
 
     row = 0
     X_num = 0
 
+    print("Creating matrices")
     for X in list_3dpoints:
         seen_in_cameras = []
         i = 0
@@ -155,15 +162,55 @@ def adjust(point_cloud_data, K, poses, n_images):
             #J[row:row+1, j*7:(j+1)*7] = jacobian_get_camera(K, poses[j], X)
             #J[row:row+1, (X_col_start+X_num*3):(X_col_start+(X_num+1)*3)] = jacobian_get_point(K, poses[j], X)
             camera_w= list(range((j*7), ((j+1)*7)))
-            point_w = list(range((X_col_start+X_num*3), (X_col_start+(X_num+1)*3)))
-            J[np.ix_([row, row+1], camera_w)] = jacobian_get_camera(K, poses[j], X)
-            J[np.ix_([row, row+1], point_w)] = jacobian_get_point(K, poses[j], X)
-            e_tmp = point_cloud_data[j]['2dpoints'][np.where(point_cloud_data[j]['3dpoints'] == X)[0][0], :] - reproject_point(K, poses[j], X)
+            point_w = list(range((X_num*3), (X_num+1)*3))
+            J_c[np.ix_([row, row+1], camera_w)] = jacobian_get_camera(K, poses[j], X)
+            J_p[np.ix_([row, row+1], point_w)] = jacobian_get_point(K, poses[j], X)
+            point = np.where(point_cloud_data[j]['3dpoints'] == X)[0][0]
+            e_tmp = point_cloud_data[j]['2dpoints'][point, :] - reproject_point(K, poses[j], X)
             e[row] = e_tmp[0]
             e[row+1] = e_tmp[1]
+            list_colors.append(point_cloud_data[j]['colors'][point, :])
             row += 2
         X_num += 1
 
-    J = scipy.sparse.csr_matrix(J)
-    dx = np.linalg.lstsq(np.dot(J.T, J), np.dot(J.T, e))
-    print dx.shape
+    print("Beginning matrix operations...")
+    J_c = scipy.sparse.csc_matrix(J_c)
+    J_p = scipy.sparse.csc_matrix(J_p)
+    print("Sparse matrix conversion complete (dok to csr).")
+    B = scipy.sparse.dia_matrix(J_c.T.dot(J_c))
+    C = scipy.sparse.dia_matrix(J_p.T.dot(J_p))
+    E = J_c.T.dot(J_p)
+    print("Hessian decomposition complete.")
+    g_c = J_c.T.dot(e)
+    g_p = J_p.T.dot(e)
+    print("Gradients complete.")
+    if np.sum(C > 1e-10) == J_pcols:
+        print("Optimization 01 possible. Executing...")
+        EC_1 = E.dot(scipy.sparse.linalg.inv(C))
+        S_C = B - EC_1.dot(E.T)
+        v = -g_c + EC_1.dot(g_p)
+        p_c = scipy.sparse.linalg.lsqr(S_C, v).todense()
+        p_p = scipy.sparse.linalg.inv(C).dot(-g_p - E.T.dot(p_c)).todense()
+    elif np.sum(B > 1e-10) == J_pcols:
+        print("Optimization 02 possible. Executing...")
+        EB_1 = E.T.dot(scipy.sparse.linalg.inv(B))
+        S_B = C - EB_1.dot(E)
+        v = -g_c + EB_1.dot(g_p)
+        p_c = scipy.sparse.linalg.lsqr(S_B, v).todense()
+        p_p = scipy.sparse.linalg.inv(B).dot(-g_p - E.dot(p_c)).todense()
+    else:
+        print("No optimization possible (matrices are singular).")
+        print("Using default operation.")
+        J = scipy.sparse.hstack([J_c, J_p])
+        H = J.T.dot(J)
+        b = J.T.dot(e)
+        [p, info] = scipy.sparse.linalg.minres(H, b)
+        if info == 0:
+            print("Convergence successful")
+        else:
+            print("Convergence unsuccessful")
+        p_c = p[:n_images*7]
+        p_p = p[n_images*7:]
+    print("Bundle adjustment complete.")
+
+    return [p_c, p_p, np.matrix(list_3dpoints), np.matrix(list_colors)]
