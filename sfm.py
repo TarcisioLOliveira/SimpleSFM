@@ -7,6 +7,8 @@ import os
 import sys
 from bundle_adj2 import adjust
 
+sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0)
+
 class SFM(object):
     def __init__(self, instrinsic, images_path, distCoeffs = 0):
         self.distCoeffs = distCoeffs
@@ -19,13 +21,32 @@ class SFM(object):
         self.imgs_used = 2
         n_cameras = 1
 
+        max_poses = len(img_path_list) - 1
+        print('Initial conditions established')
         for img in self.img_data[2:]:
+            print('New pose estimation, '+str(self.imgs_used)+' of '+str(max_poses))
             camera_pose = self.estimate_new_view_pose(img)
             prev_img_idx = self.imgs_used - 1
 
             points1, points2, matches = self.kNNMatch(self.img_data[prev_img_idx], img)
+            if len(points1) == 0 or len(points2) == 0 or not np.any(camera_pose):
+                print("Not enough matches: "+str(len(matches))+"/"+str(self.MIN_MATCH_COUNT))
+                self.img_data[self.imgs_used]['pose'] = camera_pose
+                self.imgs_used += 1
+                point_cloud_data = {'3dpoints': [],
+                                    '2dpoints': [],
+                                    'point_img_corresp': [],
+                                    'colors': []}
+                self.point_cloud.append(point_cloud_data)
+                continue
+
             points_3d = self.triangulatePoints(self.img_data[prev_img_idx]['pose'], camera_pose,
                                                points1, points2)
+
+            any_nan = np.array(np.any(np.isnan(points_3d), axis=-1))
+            all_nan = np.array(np.all(np.isnan(points_3d), axis=-1))
+            print(str(self.imgs_used)+": points3d - number of NaNs:"+str(len(any_nan[any_nan])))
+            print(str(self.imgs_used)+": points3d - number of NaNs:"+str(len(all_nan[all_nan])))
 
             points_idx = [x.queryIdx for x in matches]
             self.img_data[self.imgs_used]['pose'] = camera_pose
@@ -40,39 +61,14 @@ class SFM(object):
 
             self.point_cloud.append(point_cloud_data)
 
-        # BA
-        all_points3d = []
-        all_points2d = []
-        cam_idxs = []
-        for c_idx, p in enumerate(self.point_cloud):
-            all_points3d.extend(p['3dpoints'])
-            all_points2d.extend(p['2dpoints'])
-            cam_idxs.extend([c_idx for _ in range(len(p['3dpoints']))])
-
-        # camera_params = [self.get_cam_params(c['pose'])
-        #         for c in self.img_data[:self.imgs_used]]
-
-
-        # res = adjust(np.array(camera_params), np.array(all_points3d), len(camera_params), len(all_points3d),
-        #             cam_idxs, np.array(all_points2d))
-
-        # points_3d_flat = res[n_cameras*9:]
-
-        # points_3d = points_3d_flat.reshape((points_3d_flat/3, 3))
-
-        # end_pos = 0
-        # for idx, p in enumerate(self.point_cloud):
-        #     size = len(p['3dpoints'])
-        #     self.point_cloud[idx]['3dpoints'] = points_3d[end_pos:end_pos+size, :]
-        #     end_pos = end_pos+size
-
+        # Bundle Adjustment
         print("Adjusting...")
         [_, dx_p, point_list, color_list] = adjust(self.point_cloud, K, [data['pose'] for data in self.img_data], self.imgs_used)
-        dx_p = dx_p.reshape((-1, 3))
         point_list = point_list + dx_p
 
+        print(point_list.shape)
+        print(color_list.shape)
         self.write_ply(point_list, color_list)
-        #self.write_ply(all_points3d, color_list)
 
     def get_cam_params(self, pose):
         rot, _ = cv.Rodrigues(pose[0:3,0:3])
@@ -99,7 +95,7 @@ class SFM(object):
         kp, des = sift.detectAndCompute(cv.cvtColor(img, cv.COLOR_RGB2GRAY),None)
         return kp, des
 
-    def trainFlannMatch(self, img, current_descriptors, lowes_thresh=0.75):
+    def trainFlannMatch(self, img, current_descriptors, lowes_thresh=0.7):
         FLANN_INDEX_KDTREE = 0
         index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)
         search_params = dict(checks=50)   # or pass empty dictionary
@@ -115,7 +111,7 @@ class SFM(object):
         matches = sorted(matches, key= lambda x:x.distance)
         return matches[:30]
 
-    def kNNMatch(self, img1, img2, lowes_thresh=0.75):
+    def kNNMatch(self, img1, img2, lowes_thresh=0.7):
         kp1, des1 = img1['keypoints'], img1['descriptors']
         kp2, des2 = img2['keypoints'], img2['descriptors']
 
@@ -124,27 +120,28 @@ class SFM(object):
 
         search_params = dict(checks=50)   # or pass empty dictionary
         flann = cv.FlannBasedMatcher(index_params,search_params)
-        matches = flann.knnMatch(des1,des2,k=2)
+        if not (des1 is None) and not (des2 is None):
+            matches = flann.knnMatch(des1,des2,k=2)
 
-        # Need to draw only good matches, so create a mask
-        matchesMask = [[0,0] for j in range(len(matches))]
+            # Need to draw only good matches, so create a mask
+            matchesMask = [[0,0] for j in range(len(matches))]
 
-        # ratio test as per Lowe's paper
-        good = []
-        for j,(m,n) in enumerate(matches):
-            if m.distance < lowes_thresh*n.distance:
-                good.append(m)
+            # ratio test as per Lowe's paper
+            good = []
+            for j,(m,n) in enumerate(matches):
+                if m.distance < lowes_thresh*n.distance:
+                    good.append(m)
 
-        if len(good)>=self.MIN_MATCH_COUNT:
-            points1 = np.array([kp1[x.queryIdx].pt for x in good])
-            points2 = np.array([kp2[x.trainIdx].pt for x in good])
-            return points1, points2, good
+            if len(good)>=self.MIN_MATCH_COUNT:
+                points1 = np.array([kp1[x.queryIdx].pt for x in good])
+                points2 = np.array([kp2[x.trainIdx].pt for x in good])
+                return points1, points2, good
 
-        return [], [], good
+        return [], [], []
 
     def findDecomposedEssentialMatrix(self, p1, p2):
         # fundamental matrix and inliers
-        F, mask = cv.findFundamentalMat(p1, p2, cv.FM_RANSAC, 3, 0.99)
+        F, mask = cv.findFundamentalMat(p1, p2, cv.FM_LMEDS)#cv.FM_RANSAC, 3, 0.99) RANSAC was inverting depth for some reason
         mask = mask.astype(bool).flatten()
         E = np.dot(self.K.T, np.dot(F, self.K))
 
@@ -158,7 +155,10 @@ class SFM(object):
         pts2_norm = cv.undistortPoints(np.expand_dims(points2, axis=1),
                 cameraMatrix=self.K, distCoeffs=self.distCoeffs)
         points_4d_hom = cv.triangulatePoints(P1, P2, pts1_norm, pts2_norm)
-        # points_3d = cv.convertPointsFromHomogeneous(points_4d_hom.T).reshape(-1,3)
+        # pts1_norm = points1.T
+        # pts2_norm = points2.T
+        # points_4d_hom = cv.triangulatePoints(self.K.dot(P1), self.K.dot(P2), pts1_norm, pts2_norm)
+        points_3d = cv.convertPointsFromHomogeneous(points_4d_hom.T).reshape(-1,3)
         points_4d = points_4d_hom / np.tile(points_4d_hom[-1, :], (4, 1))
         points_3d = points_4d[:3, :].T
         return points_3d
@@ -195,9 +195,11 @@ class SFM(object):
             return [point_cloud_data]
 
     def estimate_new_view_pose(self, img):
-        print('New pose estimation')
         descriptors = [uImg['descriptors']
                        for uImg in self.img_data[:self.imgs_used]]
+        
+        # descriptors = [self.img_data[self.imgs_used-1]['descriptors']]
+
         # for uImg in self.img_data[:self.imgs_used]:
         #     descriptors.append(uImg['descriptors'])
 
@@ -213,7 +215,7 @@ class SFM(object):
                 cloud_idx = m.imgIdx-1
 
             pointIdx = np.searchsorted(self.point_cloud[cloud_idx]['point_img_corresp'], m.trainIdx)
-            if pointIdx == len(self.point_cloud[cloud_idx]['point_img_corresp']):
+            if pointIdx >= len(self.point_cloud[cloud_idx]['point_img_corresp']):
                 continue
 
             # Get the 3d Point corresponding to the train image keypoint
@@ -226,15 +228,22 @@ class SFM(object):
 
 
         # estimate camera pose from 3d2d Correspondences
-        _, rvec, tvec, inliers = cv.solvePnPRansac(
-                            np.array(points_3d, dtype=np.float64),
-                            np.array(points_2d, dtype=np.float64),
-                            self.K, None, confidence=0.99,
-                            flags=cv.SOLVEPNP_ITERATIVE,
-                            reprojectionError=8.)
+        if len(points_3d) > 4 and len(points_2d) > 4:
+            _, rvec, tvec = cv.solvePnP(
+                                np.array(points_3d, dtype=np.float64),
+                                np.array(points_2d, dtype=np.float64),
+                                self.K, self.distCoeffs, flags=cv.SOLVEPNP_ITERATIVE)
+            # _, rvec, tvec, inliers = cv.solvePnPRansac(
+            #                     np.array(points_3d, dtype=np.float64),
+            #                     np.array(points_2d, dtype=np.float64),
+            #                     self.K, self.distCoeffs, confidence=0.99,
+            #                     flags=cv.SOLVEPNP_ITERATIVE,
+            #                     reprojectionError=8.)
 
-        cam_rmat, _ = cv.Rodrigues(rvec)
-        camera_pose = np.concatenate([cam_rmat, tvec], axis=1)
+            cam_rmat, _ = cv.Rodrigues(rvec)
+            camera_pose = np.concatenate([cam_rmat, tvec], axis=1)
+        else:
+            camera_pose = np.zeros((3,4))
         return camera_pose
 
 
@@ -280,29 +289,40 @@ if __name__  == '__main__':
     #
     # path = Path('./data/fountain-P11/images')
 
-    #
-    # f = 2500.0
-    # width = 1024.0
-    # height = 768.0
-    # K = np.array([[f,0,width/2],
-    #               [0,f,height/2],
-    #               [0,0,1]])
-
-    K = np.array([[3140.63, 0, 1631.5],
-                  [0, 3140.63, 1223.5],
-                  [0, 0, 1]])
+    
+    f = 2500.0
+    width = 1024.0
+    height = 768.0
+    K = np.array([[f,0,width/2],
+                  [0,f,height/2],
+                  [0,0,1]])
 
     path = Path('./data/crazyhorse')
+
+    distCoeffs = 0
 
     # K = np.array([[3140.63, 0, 1631.5],
     #               [0, 3140.63, 1223.5],
     #               [0, 0, 1]])
 
     # path = Path('./images')
+
+    # K = np.array([[3140.63, 0, 1631.5],
+    #               [0, 3140.63, 1223.5],
+    #               [0, 0, 1]])
+
+    # GoPro
+    # path = Path('./images')
     # camera = np.load('./calibration_data.npz')
     # K = camera['intrinsic_matrix']
     # distCoeffs = camera['distCoeff']
 
+    # Celular
+    # path = Path('./images-lantern2')
+    # camera = np.load('./camera.npz')
+    # K = camera['mtx']
+    # distCoeffs = camera['dist']
+
     img_path_list = sorted([str(x) for x in path.iterdir()])
 
-    sfm_pipeline = SFM(K, img_path_list)
+    sfm_pipeline = SFM(K, img_path_list, distCoeffs=distCoeffs)

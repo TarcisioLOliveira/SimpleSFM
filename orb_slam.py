@@ -7,17 +7,17 @@ from pathlib2 import Path
 
 MIN_MATCH_COUNT = 10
 
-path = Path('./images')
+path = Path('./Sample Banana Plant/Images')
 
 img_path_list = sorted([str(x) for x in path.iterdir()])
 
-img2 = cv.imread(img_path_list[0], 1) # queryImage
+img2 = cv.imread(img_path_list[0], 1) # trainImage
 
 print(img_path_list[0])
 
 for img_path in img_path_list[1:]:
 
-    img1 = cv.imread(img_path, 1) # trainImage
+    img1 = cv.imread(img_path, 1) # queryImage
 
     print(img_path)
 
@@ -31,7 +31,7 @@ for img_path in img_path_list[1:]:
     # create BFMatcher object
     bf = cv.BFMatcher(cv.NORM_HAMMING2)#, crossCheck=True)
     # Match descriptors.
-    matches = bf.knnMatch(des1, des2, k=2)
+    matches = bf.knnMatch(des2, des1, k=2)
     # Sort them in the order of their distance.
     # matches = sorted(matches, key = lambda x:x.distance)
 
@@ -42,8 +42,8 @@ for img_path in img_path_list[1:]:
             good.append(m)
 
     if len(good)>=MIN_MATCH_COUNT:
-        src_pts = np.float32([ kp1[m.queryIdx].pt for m in good ]).reshape(-1,1,2)
-        dst_pts = np.float32([ kp2[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
+        src_pts = np.float32([ kp1[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
+        dst_pts = np.float32([ kp2[m.queryIdx].pt for m in good ]).reshape(-1,1,2)
         M, mask = cv.findHomography(src_pts, dst_pts, cv.RANSAC,5.0)
         matchesMask = mask.ravel().tolist()
         h,w,d = img1.shape
@@ -62,7 +62,7 @@ for img_path in img_path_list[1:]:
 
         t_img1 = cv.warpPerspective(img1, M, (w2,h2))
 
-        cv.imwrite('test.png', t_img1)
+        # cv.imwrite('test.png', t_img1)
 
         # dst_2 = cv.perspectiveTransform(pts,M) #test
         # img2 = cv.polylines(img2,[np.int32(dst_2)],True,255,3, cv.LINE_AA) #test
@@ -87,6 +87,7 @@ for img_path in img_path_list[1:]:
 
         img2 = cv.add(img2_bg, img1_fg)
         #img2 = cv.polylines(img2,[np.int32(dst_2)],True,255,3, cv.LINE_AA) #test
+        cv.imwrite('result.png', img2)
     else:
         print( "Not enough matches are found - {}/{}".format(len(good), MIN_MATCH_COUNT) )
         matchesMask = None
@@ -97,4 +98,3 @@ for img_path in img_path_list[1:]:
     #                    flags = 2)
 
     # img3 = cv.drawMatches(img1,kp1,img2,kp2,good,None,**draw_params)
-    cv.imwrite('result.png', img2)

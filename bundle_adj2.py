@@ -32,7 +32,7 @@ def R_to_quaternion(R):
         qw = (R[0, 2] - R[2, 0]) / S;
         qx = (R[0, 1] + R[1, 0]) / S; 
         qy = 0.25 * S;
-        qz = (m12 + m21) / S; 
+        qz = (R[1, 2] + R[2, 1]) / S; 
     else:
         S = sqrt(1.0 + R[2, 2] - R[0, 0] - R[1, 1]) * 2; # S=4*qz
         qw = (R[1, 0] - R[0, 1]) / S;
@@ -132,17 +132,38 @@ def reproject_point(K, P, X):
     return np.array([u/w, v/w])
 
 def adjust(point_cloud_data, K, poses, n_images):
-    n_points = 0
     all_3dpoints = []
-    for data in point_cloud_data:
-        all_3dpoints.extend(data['3dpoints'])
+    #for data_i in range(len(point_cloud_data)):
+        #point_cloud_data[data_i]['3dpoints'] = point_cloud_data[data_i]['3dpoints'].astype(int64)
+        #data = point_cloud_data[data_i]
 
-    list_3dpoints = map(np.unique, all_3dpoints)
+    empty_data = []
+        
+    for data_i in range(len(point_cloud_data)):
+        if len(point_cloud_data[data_i]['3dpoints']) == 0:
+            empty_data.append(data_i)
+            continue
+    
+    num_deleted = 0
+    for i in empty_data:
+        del point_cloud_data[i - num_deleted]
+        del poses[i - num_deleted]
+        n_images -= 1
+        num_deleted += 1
+
+    for data_i in range(len(point_cloud_data)):
+        tmp_list = point_cloud_data[data_i]['3dpoints'][np.all(np.isfinite(point_cloud_data[data_i]['3dpoints']), axis=1)]
+        all_3dpoints.extend(tmp_list)
+        point_cloud_data[data_i]['3dpoints'] = tmp_list
+
+    list_3dpoints = np.unique(all_3dpoints, axis=-1)
     list_colors = []
-    n_points = len(list_3dpoints)
-    J_rows = n_points*2
+    J_rows = len(all_3dpoints)*2
     J_ccols = n_images*7
-    J_pcols = n_points*3
+    J_pcols = len(list_3dpoints)*3
+    print(J_rows)
+    print(J_ccols)
+    print(J_pcols)
     J_c = scipy.sparse.dok_matrix((J_rows, J_ccols), dtype=np.float64)
     J_p = scipy.sparse.dok_matrix((J_rows, J_pcols), dtype=np.float64)
     e = np.zeros((J_rows, 1))
@@ -152,25 +173,24 @@ def adjust(point_cloud_data, K, poses, n_images):
 
     print("Creating matrices")
     for X in list_3dpoints:
-        seen_in_cameras = []
-        i = 0
+        j = 0
+        found_color = False
         for data in point_cloud_data:
-            if X in data['3dpoints']:
-                seen_in_cameras.append(i)
-            i += 1
-        for j in seen_in_cameras:
-            #J[row:row+1, j*7:(j+1)*7] = jacobian_get_camera(K, poses[j], X)
-            #J[row:row+1, (X_col_start+X_num*3):(X_col_start+(X_num+1)*3)] = jacobian_get_point(K, poses[j], X)
-            camera_w= list(range((j*7), ((j+1)*7)))
-            point_w = list(range((X_num*3), (X_num+1)*3))
-            J_c[np.ix_([row, row+1], camera_w)] = jacobian_get_camera(K, poses[j], X)
-            J_p[np.ix_([row, row+1], point_w)] = jacobian_get_point(K, poses[j], X)
-            point = np.where(point_cloud_data[j]['3dpoints'] == X)[0][0]
-            e_tmp = point_cloud_data[j]['2dpoints'][point, :] - reproject_point(K, poses[j], X)
-            e[row] = e_tmp[0]
-            e[row+1] = e_tmp[1]
-            list_colors.append(point_cloud_data[j]['colors'][point, :])
-            row += 2
+            points = np.asarray(data['3dpoints'] == X).nonzero()
+            if len(points[0]) > 0:
+                point = points[0][0]
+                camera_w = list(range((j*7), ((j+1)*7)))
+                point_w = list(range((X_num*3), (X_num+1)*3))
+                J_c[np.ix_([row, row+1], camera_w)] = jacobian_get_camera(K, poses[j], X)
+                J_p[np.ix_([row, row+1], point_w)] = jacobian_get_point(K, poses[j], X)
+                e_tmp = data['2dpoints'][point, :] - reproject_point(K, poses[j], X)
+                e[row] = e_tmp[0]
+                e[row+1] = e_tmp[1]
+                if not found_color:
+                    list_colors.append(data['colors'][point, :])
+                    found_color = True
+                row += 2
+            j += 1
         X_num += 1
 
     print("Beginning matrix operations...")
@@ -213,4 +233,4 @@ def adjust(point_cloud_data, K, poses, n_images):
         p_p = p[n_images*7:]
     print("Bundle adjustment complete.")
 
-    return [p_c, p_p, np.matrix(list_3dpoints), np.matrix(list_colors)]
+    return [p_c, p_p.reshape((-1, 3)), np.matrix(list_3dpoints), np.matrix(list_colors)]
