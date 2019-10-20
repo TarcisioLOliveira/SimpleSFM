@@ -25,10 +25,10 @@ class SFM(object):
         print('Initial conditions established')
         for img in self.img_data[2:]:
             print('New pose estimation, '+str(self.imgs_used)+' of '+str(max_poses))
-            camera_pose = self.estimate_new_view_pose(img)
+            camera_pose, points1, points2, matches = self.estimate_new_view_pose(img)
             prev_img_idx = self.imgs_used - 1
 
-            points1, points2, matches = self.kNNMatch(self.img_data[prev_img_idx], img)
+            #points1, points2, matches = self.kNNMatch(self.img_data[prev_img_idx], img)
             if len(points1) == 0 or len(points2) == 0 or not np.any(camera_pose):
                 print("Not enough matches: "+str(len(matches))+"/"+str(self.MIN_MATCH_COUNT))
                 self.img_data[self.imgs_used]['pose'] = camera_pose
@@ -121,7 +121,7 @@ class SFM(object):
         search_params = dict(checks=50)   # or pass empty dictionary
         flann = cv.FlannBasedMatcher(index_params,search_params)
         if not (des1 is None) and not (des2 is None):
-            matches = flann.knnMatch(des1,des2,k=2)
+            matches = flann.knnMatch(des2,des1,k=2)
 
             # Need to draw only good matches, so create a mask
             matchesMask = [[0,0] for j in range(len(matches))]
@@ -133,19 +133,20 @@ class SFM(object):
                     good.append(m)
 
             if len(good)>=self.MIN_MATCH_COUNT:
-                points1 = np.array([kp1[x.queryIdx].pt for x in good])
-                points2 = np.array([kp2[x.trainIdx].pt for x in good])
+                points1 = np.array([kp1[x.trainIdx].pt for x in good])
+                points2 = np.array([kp2[x.queryIdx].pt for x in good])
                 return points1, points2, good
 
         return [], [], []
 
     def findDecomposedEssentialMatrix(self, p1, p2):
         # fundamental matrix and inliers
-        F, mask = cv.findFundamentalMat(p1, p2, cv.FM_LMEDS)#cv.FM_RANSAC, 3, 0.99) RANSAC was inverting depth for some reason
+        # F, mask = cv.findFundamentalMat(p2, p1, cv.FM_LMEDS, 3, 0.99) #RANSAC was inverting depth for some reason
+        F, mask = cv.findFundamentalMat(p2, p1, cv.FM_RANSAC, 0.5, 0.99)
         mask = mask.astype(bool).flatten()
         E = np.dot(self.K.T, np.dot(F, self.K))
 
-        _, R, t, _ = cv.recoverPose(E, p1[mask], p2[mask], self.K)
+        _, R, t, _ = cv.recoverPose(E, p2[mask], p1[mask], self.K)
 
         return R, t
 
@@ -154,7 +155,8 @@ class SFM(object):
                 cameraMatrix=self.K, distCoeffs=self.distCoeffs)
         pts2_norm = cv.undistortPoints(np.expand_dims(points2, axis=1),
                 cameraMatrix=self.K, distCoeffs=self.distCoeffs)
-        points_4d_hom = cv.triangulatePoints(P1, P2, pts1_norm, pts2_norm)
+        # points_4d_hom = cv.triangulatePoints(P1, P2, pts1_norm, pts2_norm)
+        points_4d_hom = cv.triangulatePoints(P2, P1, pts2_norm, pts1_norm)
         # pts1_norm = points1.T
         # pts2_norm = points2.T
         # points_4d_hom = cv.triangulatePoints(self.K.dot(P1), self.K.dot(P2), pts1_norm, pts2_norm)
@@ -195,6 +197,22 @@ class SFM(object):
             return [point_cloud_data]
 
     def estimate_new_view_pose(self, img):
+        ''' Keypoint Matching '''
+        points1, points2, matches = self.kNNMatch(self.img_data[self.imgs_used-1], img)
+
+        if len(points1) == 0:
+            print("Not enough matches: "+str(len(matches))+"/"+str(self.MIN_MATCH_COUNT))
+            return None
+
+        ''' Param Estimation '''
+        R, t = self.findDecomposedEssentialMatrix(points1, points2)
+
+        P1 = self.img_data[self.imgs_used-1]["pose"]
+        P2 = np.hstack((np.dot(R, P1[:,:3]), (t.T + P1[:,3]).T)) #INVERT R dot?
+
+        return P2, points1, points2, matches
+
+    def old_estimate_new_view_pose(self, img):
         descriptors = [uImg['descriptors']
                        for uImg in self.img_data[:self.imgs_used]]
         
@@ -202,6 +220,8 @@ class SFM(object):
 
         # for uImg in self.img_data[:self.imgs_used]:
         #     descriptors.append(uImg['descriptors'])
+
+        prev_pose = self.img_data[self.imgs_used-1]['pose']
 
         matches = self.trainFlannMatch(img, descriptors)
 
@@ -229,16 +249,25 @@ class SFM(object):
 
         # estimate camera pose from 3d2d Correspondences
         if len(points_3d) > 4 and len(points_2d) > 4:
-            _, rvec, tvec = cv.solvePnP(
+            # _, rvec, tvec = cv.solvePnP(
+            #                      np.array(points_3d, dtype=np.float64),
+            #                      np.array(points_2d, dtype=np.float64),
+            #                      self.K, self.distCoeffs, flags=cv.SOLVEPNP_ITERATIVE,
+            #                      useExtrinsicGuess=True, rvec=prev_pose[:,:3], tvec=prev_pose[:,3])
+            _, rvec, tvec, inliers = cv.solvePnPRansac(
                                 np.array(points_3d, dtype=np.float64),
                                 np.array(points_2d, dtype=np.float64),
-                                self.K, self.distCoeffs, flags=cv.SOLVEPNP_ITERATIVE)
-            # _, rvec, tvec, inliers = cv.solvePnPRansac(
-            #                     np.array(points_3d, dtype=np.float64),
-            #                     np.array(points_2d, dtype=np.float64),
-            #                     self.K, self.distCoeffs, confidence=0.99,
-            #                     flags=cv.SOLVEPNP_ITERATIVE,
-            #                     reprojectionError=8.)
+                                self.K, self.distCoeffs, confidence=0.99,
+                                flags=cv.SOLVEPNP_EPNP,
+                                #useExtrinsicGuess=True, rvec=prev_pose[:,:3], tvec=prev_pose[:,3],
+                                reprojectionError=8.)
+
+            #               PnP               PnPRansac
+            # ITERATIVE                      
+            # P3P           X                 X
+            # EPNP          
+            # DLS
+            # UPNP
 
             cam_rmat, _ = cv.Rodrigues(rvec)
             camera_pose = np.concatenate([cam_rmat, tvec], axis=1)
@@ -257,7 +286,7 @@ class SFM(object):
         return image_coords, colors
 
 
-    def write_ply(self, points, colors):
+    def write_ply(self, points, colors, name='mesh.ply'):
         #ply_header = (
         #            '''ply
         #            format ascii 1.0
@@ -271,7 +300,7 @@ class SFM(object):
         #            end_header
         #            '''
         #            )
-        filename = 'meshes/mesh.ply'
+        filename = 'meshes/'+name
 
         points = np.hstack([points, colors])
         with open(filename, 'w') as outfile:
@@ -290,20 +319,20 @@ if __name__  == '__main__':
     # path = Path('./data/fountain-P11/images')
 
     
-    f = 2500.0
-    width = 1024.0
-    height = 768.0
-    K = np.array([[f,0,width/2],
-                  [0,f,height/2],
-                  [0,0,1]])
+    # f = 2500.0
+    # width = 1024.0
+    # height = 768.0
+    # K = np.array([[f,0,width/2],
+    #               [0,f,height/2],
+    #               [0,0,1]])
 
     path = Path('./data/crazyhorse')
 
     distCoeffs = 0
 
-    # K = np.array([[3140.63, 0, 1631.5],
-    #               [0, 3140.63, 1223.5],
-    #               [0, 0, 1]])
+    K = np.array([[3140.63, 0, 1631.5],
+                  [0, 3140.63, 1223.5],
+                  [0, 0, 1]])
 
     # path = Path('./images')
 
@@ -312,10 +341,17 @@ if __name__  == '__main__':
     #               [0, 0, 1]])
 
     # GoPro
-    # path = Path('./images')
+    # path = Path('./images-2')
     # camera = np.load('./calibration_data.npz')
     # K = camera['intrinsic_matrix']
     # distCoeffs = camera['distCoeff']
+
+    # Castle
+    # path = Path('./castle')
+    # K = np.array([[2905.88, 0, 1416],
+    #               [0, 2905.88, 1064],
+    #               [0, 0, 1]])
+    # distCoeffs = 0
 
     # Celular
     # path = Path('./images-lantern2')
