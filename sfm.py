@@ -7,7 +7,7 @@ import os
 import sys
 from bundle_adj2 import adjust
 
-sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0)
+sys.stdout = os.fdopen(sys.stdout.fileno(), 'w')
 
 class SFM(object):
     def __init__(self, instrinsic, images_path, distCoeffs = 0):
@@ -242,14 +242,16 @@ class SFM(object):
             y_coords = int(img['keypoints'][m.queryIdx].pt[1])
             points_2d.append([x_coords, y_coords])
 
+        camera_pose = np.zeros((3,4))
         # estimate camera pose from 3d2d Correspondences
         if len(points_3d) > 4 and len(points_2d) > 4:
             rvec_in, _ = cv.Rodrigues(prev_pose[:,:3])
+            tvec_in = np.array(prev_pose[:,3])
             _, rvec, tvec = cv.solvePnP(
                                  np.array(points_3d, dtype=np.float64),
                                  np.array(points_2d, dtype=np.float64),
                                  self.K, self.distCoeffs, flags=cv.SOLVEPNP_ITERATIVE,
-                                 useExtrinsicGuess=True, rvec=rvec_in, tvec=prev_pose[:,3])
+                                 useExtrinsicGuess=True, rvec=rvec_in, tvec=tvec_in)
             # _, rvec, tvec, inliers = cv.solvePnPRansac(
             #                     np.array(points_3d, dtype=np.float64),
             #                     np.array(points_2d, dtype=np.float64),
@@ -286,9 +288,11 @@ class SFM(object):
             # MAX_COUNT     X                 X
 
             cam_rmat, _ = cv.Rodrigues(rvec)
-            camera_pose = np.concatenate([cam_rmat.get(), tvec.get()], axis=1)
-        else:
-            camera_pose = np.zeros((3,4))
+            camera_pose[:,:3] = cam_rmat
+            camera_pose[:,3] = tvec
+            # camera_pose = np.concatenate([cam_rmat, tvec], axis=1)
+
+        print(camera_pose)
         return camera_pose
 
 
@@ -303,23 +307,15 @@ class SFM(object):
 
 
     def write_ply(self, points, colors, name='mesh.ply'):
-        #ply_header = (
-        #            '''ply
-        #            format ascii 1.0
-        #            element vertex {vertex_count}
-        #            property float x
-        #            property float y
-        #            property float z
-        #            property uchar red
-        #            property uchar green
-        #            property uchar blue
-        #            end_header
-        #            '''
-        #            )
+        ply_header = ("ply\nformat ascii 1.0\nelement vertex {}\n"
+                   "property float x\nproperty float y\nproperty float z\n"
+                   "property uchar red\nproperty uchar green\nproperty uchar blue\n"
+                   "end_header\n"
+                   ).format(points.shape[0])
         filename = 'meshes/'+name
-
         points = np.hstack([points, colors])
-        with open(filename, 'w') as outfile:
+        with open(filename, 'a') as outfile:
+            outfile.write(ply_header)
             #outfile.write(ply_header.format(vertex_count=len(coords)))
             np.savetxt(outfile, points, '%f %f %f %d %d %d')
 
