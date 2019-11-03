@@ -136,12 +136,12 @@ class SFM(object):
 
     def findDecomposedEssentialMatrix(self, p1, p2):
         # fundamental matrix and inliers
-        F, mask = cv.findFundamentalMat(p2, p1, cv.FM_LMEDS, 1, 0.99)
+        F, mask = cv.findFundamentalMat(p1, p2, cv.FM_LMEDS, 1, 0.99)
         # F, mask = cv.findFundamentalMat(p2, p1, cv.FM_RANSAC, 1, 0.99)
         mask = mask.astype(bool).flatten()
         E = np.dot(self.K.T, np.dot(F, self.K))
 
-        _, R, t, _ = cv.recoverPose(E, p2[mask], p1[mask], self.K)
+        _, R, t, _ = cv.recoverPose(E, p1[mask], p2[mask], self.K)
 
         return R, t
 
@@ -151,7 +151,7 @@ class SFM(object):
         pts2_norm = cv.undistortPoints(np.expand_dims(points2, axis=1),
                 cameraMatrix=self.K, distCoeffs=self.distCoeffs)
         # points_4d_hom = cv.triangulatePoints(P1, P2, pts1_norm, pts2_norm)
-        points_4d_hom = cv.triangulatePoints(P2, P1, pts2_norm, pts1_norm)
+        points_4d_hom = cv.triangulatePoints(P1, P2, pts1_norm, pts2_norm)
         # pts1_norm = points1.T
         # pts2_norm = points2.T
         # points_4d_hom = cv.triangulatePoints(self.K.dot(P1), self.K.dot(P2), pts1_norm, pts2_norm)
@@ -210,7 +210,7 @@ class SFM(object):
     def estimate_new_view_pose(self, img):
         descriptors = [uImg['descriptors']
                        for uImg in self.img_data[:self.imgs_used]]
-        
+
         # descriptors = [self.img_data[self.imgs_used-1]['descriptors']]
 
         # for uImg in self.img_data[:self.imgs_used]:
@@ -307,15 +307,15 @@ class SFM(object):
 
 
     def write_ply(self, points, colors, name='mesh.ply'):
-        ply_header = ("ply\nformat ascii 1.0\nelement vertex {}\n"
-                   "property float x\nproperty float y\nproperty float z\n"
-                   "property uchar red\nproperty uchar green\nproperty uchar blue\n"
-                   "end_header\n"
-                   ).format(points.shape[0])
+        # ply_header = ("ply\nformat ascii 1.0\nelement vertex {}\n"
+        #            "property float x\nproperty float y\nproperty float z\n"
+        #            "property uchar red\nproperty uchar green\nproperty uchar blue\n"
+        #            "end_header\n"
+        #            ).format(points.shape[0])
         filename = 'meshes/'+name
         points = np.hstack([points, colors])
         with open(filename, 'a') as outfile:
-            outfile.write(ply_header)
+            # outfile.write(ply_header)
             #outfile.write(ply_header.format(vertex_count=len(coords)))
             np.savetxt(outfile, points, '%f %f %f %d %d %d')
 
@@ -330,21 +330,21 @@ if __name__  == '__main__':
     #
     # path = Path('./data/fountain-P11/images')
 
-    
+
     # f = 2500.0
     # width = 1024.0
     # height = 768.0
     # K = np.array([[f,0,width/2],
     #               [0,f,height/2],
     #               [0,0,1]])
+    #
+    # path = Path('./data/crazyhorse')
+    #
+    # distCoeffs = 0
 
-    path = Path('./data/crazyhorse')
-
-    distCoeffs = 0
-
-    K = np.array([[3140.63, 0, 1631.5],
-                  [0, 3140.63, 1223.5],
-                  [0, 0, 1]])
+    # K = np.array([[3140.63, 0, 1631.5],
+    #               [0, 3140.63, 1223.5],
+    #               [0, 0, 1]])
 
     # path = Path('./images')
 
@@ -359,11 +359,11 @@ if __name__  == '__main__':
     # distCoeffs = camera['distCoeff']
 
     # Castle
-    # path = Path('./castle')
-    # K = np.array([[2905.88, 0, 1416],
-    #               [0, 2905.88, 1064],
-    #               [0, 0, 1]])
-    # distCoeffs = 0
+    path = Path('./data/castle')
+    K = np.array([[2905.88, 0, 1416],
+                  [0, 2905.88, 1064],
+                  [0, 0, 1]])
+    distCoeffs = 0
 
     # Celular
     # path = Path('./images-lantern2')
