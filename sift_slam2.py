@@ -7,7 +7,7 @@ from pathlib2 import Path
 
 MIN_MATCH_COUNT = 10
 
-path = Path('./Sample Banana Plant/Images')
+path = Path('./boruszyn/images')
 
 img_path_list = sorted([str(x) for x in path.iterdir()])
 
@@ -60,7 +60,7 @@ for i in range(1, len(img_info)):
         match_list.append(good)
         dst_pts = np.float32([ img_info[i]["kp"][m.trainIdx].pt for m in good ]).reshape(-1,1,2)
         src_pts = np.float32([ img_info[i-1]["kp"][m.queryIdx].pt for m in good ]).reshape(-1,1,2)
-        M, mask = cv.findHomography(src_pts, dst_pts, cv.RANSAC,5.0)
+        M, mask = cv.findHomography(dst_pts, src_pts, cv.RANSAC,5.0)
         # M, mask = cv.findHomography(src_pts, dst_pts, cv.LMEDS)
         img_info[i]["M"] = M
         img_info[i]["mask"] = mask
@@ -126,14 +126,14 @@ for image in img_info[1:]:
 
     M = M_orig
 
-    pts = np.float32([ [0,0,1],[w,0,1],[w,h,1],[0,h,1] ]).T
-    dst = M2.dot(pts)
-    dst = np.vstack((dst[:,0]/dst[2,0],dst[:,1]/dst[2,1],dst[:,2]/dst[2,2],dst[:,3]/dst[2,3])).T
+    # pts = np.float32([ [0,0,1],[w,0,1],[w,h,1],[0,h,1] ]).T
+    # dst = M2.dot(pts)
+    # dst = np.vstack((dst[:,0]/dst[2,0],dst[:,1]/dst[2,1],dst[:,2]/dst[2,2],dst[:,3]/dst[2,3])).T
 
-    x_i = int(round(min(dst[0,:])))# + x# + w2 - w
-    x_f = x_i + w2
-    y_i = int(round(min(dst[1,:])))# + y# + h2 - h
-    y_f = y_i + h2
+    # x_i = int(round(min(dst[0,:])))# + x# + w2 - w
+    # x_f = x_i + w2
+    # y_i = int(round(min(dst[1,:])))# + y# + h2 - h
+    # y_f = y_i + h2
     
     #x_i += x_i
     #x_f += x_i 
