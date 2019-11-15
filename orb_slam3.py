@@ -68,19 +68,20 @@ for i in range(0, len(img_info)):
 
 match_count += match_count.T
 
-print(match_count)
-
 match_sum = np.sum(match_count, axis=0)
-print(match_sum)
 order = np.flip(np.argsort(match_sum))
-print(match_sum.sort())
+order = np.flip(np.argsort(match_count[order[0],:]))
+order = np.hstack((order[-1],order[0:-1]))
+ordered_match_list = np.flip(np.sort(match_count[order[0],:]))
+print(ordered_match_list)
 print(order)
+
 
 base_img = img_info[order[0]]
 des_list = []
 
 # Remove the outliers (estimative)
-len_order = int(math.floor(0.7*len(order)))
+len_order = int(math.floor(0.6*len(order)))
 
 for i in range(1, len_order):
     print("Image "+str(i)+" of "+str(len_order-1))
