@@ -17,44 +17,22 @@ class SFM(object):
 
         img_path_list = sorted([str(x) for x in path.iterdir()])
         self.img_data = self.read_and_compute_keypoints(img_path_list)
-
-        match_count = np.zeros((len(self.img_data), len(self.img_data)))
-
-        for i in range(0, len(self.img_data)):
-            for j in range(i+1, len(self.img_data)):
-                _, _, matches = self.kNNMatch(self.img_data[i], self.img_data[j])
-                match_count[j, i] = len(matches)
-
-        match_count += match_count.T
-
-        match_sum = np.sum(match_count, axis=0)
-        order = np.flip(np.argsort(match_sum))
-        order = np.flip(np.argsort(match_count[order[0],:]))
-        order = np.hstack((order[-1],order[0:-1]))
-        # ordered_match_list = np.flip(np.sort(match_count[order[0],:]))
-        # print(ordered_match_list)
-        print(order)
-
-        base_img = self.img_data[order[0]]
-
-        used_list = [base_img]
-
-        self.point_cloud = self.compute_initial_cloud(base_img, self.img_data[order[1]])
+        self.point_cloud = self.compute_initial_cloud(self.img_data[0], self.img_data[1])
         self.imgs_used = 2
         n_cameras = 1
+
         max_poses = len(img_path_list) - 1
         print('Initial conditions established')
-        for i in range(2, len(order)):
-            img = self.img_data[order[i]]
+        for img in self.img_data[2:]:
             print('New pose estimation, '+str(self.imgs_used)+' of '+str(max_poses))
-            camera_pose, points1, points2, matches = self.old_estimate_new_view_pose(base_img, img)
+            camera_pose, points1, points2, matches = self.old_estimate_new_view_pose(img)
             prev_img_idx = self.imgs_used - 1
 
-            # camera_pose = self.estimate_new_view_pose(base_img, img, used_list)
-            # points1, points2, matches = self.kNNMatch(img, base_img)
+            # camera_pose = self.estimate_new_view_pose(img)
+            # points1, points2, matches = self.kNNMatch(img, self.img_data[prev_img_idx])
             if len(points1) == 0 or len(points2) == 0 or not np.any(camera_pose):
                 print("Not enough matches: "+str(len(matches))+"/"+str(self.MIN_MATCH_COUNT))
-                self.img_data[order[i]]['pose'] = camera_pose
+                self.img_data[self.imgs_used]['pose'] = camera_pose
                 self.imgs_used += 1
                 point_cloud_data = {'3dpoints': [],
                                     '2dpoints': [],
@@ -63,7 +41,7 @@ class SFM(object):
                 self.point_cloud.append(point_cloud_data)
                 continue
 
-            points_3d = self.triangulatePoints(base_img['pose'], camera_pose,
+            points_3d = self.triangulatePoints(self.img_data[prev_img_idx]['pose'], camera_pose,
                                                points1, points2)
 
             any_nan = np.array(np.any(np.isnan(points_3d), axis=-1))
@@ -72,17 +50,15 @@ class SFM(object):
             print(str(self.imgs_used)+": points3d - number of NaNs:"+str(len(all_nan[all_nan])))
 
             points_idx = [x.queryIdx for x in matches]
-            self.img_data[order[i]]['pose'] = camera_pose
+            self.img_data[self.imgs_used]['pose'] = camera_pose
 
-            points_2d, colors = self.get_2dpoints_and_colors_from_img(img, points2)
+            points_2d, colors = self.get_2dpoints_and_colors_from_img(self.img_data[self.imgs_used], points2)
             self.imgs_used += 1
 
             point_cloud_data = {'3dpoints': points_3d,
                                 '2dpoints': points_2d,
                                 'point_img_corresp': points_idx,
                                 'colors': colors}
-
-            used_list.append(self.img_data[order[i]])
 
             self.point_cloud.append(point_cloud_data)
 
@@ -103,7 +79,7 @@ class SFM(object):
             img = cv.imread(img_path, 1)
             kps, desc = self.SIFT_detect(img)
             img_name = img_path.split('/')[-1]
-            img_data.append({'pixels': img, 'descriptors': desc, 'keypoints': kps,'pose': np.column_stack([np.eye(3), np.zeros(3)])})
+            img_data.append({'pixels': img, 'descriptors': desc, 'keypoints': kps})
 
         return img_data
 
@@ -128,7 +104,7 @@ class SFM(object):
         # for each descriptor in the query, find the closest match
         matches = flann.match(queryDescriptors=img['descriptors'])
         matches = sorted(matches, key= lambda x:x.distance)
-        return matches#[:30]
+        return matches[:30]
 
     def kNNMatch(self, img1, img2, lowes_thresh=0.7):
         kp1, des1 = img1['keypoints'], img1['descriptors']
@@ -161,7 +137,7 @@ class SFM(object):
     def findDecomposedEssentialMatrix(self, p1, p2):
         # fundamental matrix and inliers
         # F, mask = cv.findFundamentalMat(p1, p2, cv.FM_LMEDS, 1, 0.999)
-        F, mask = cv.findFundamentalMat(p1, p2, cv.FM_RANSAC, 3.0, 0.999999)
+        F, mask = cv.findFundamentalMat(p1, p2, cv.FM_RANSAC, 1.0, 0.999)
         mask = mask.astype(bool).flatten()
         E = np.dot(self.K.T, np.dot(F, self.K))
 
@@ -203,8 +179,8 @@ class SFM(object):
         # ids of the matches used
         points_idx = [x.trainIdx for x in matches]
 
-        img1['pose'] = P1
-        img2['pose'] = P2
+        self.img_data[0]['pose'] = P1
+        self.img_data[1]['pose'] = P2
 
         points_2d, colors = self.get_2dpoints_and_colors_from_img(img2, points2)
 
@@ -215,9 +191,9 @@ class SFM(object):
 
         return [point_cloud_data]
 
-    def old_estimate_new_view_pose(self, base_img, img):
+    def old_estimate_new_view_pose(self, img):
         ''' Keypoint Matching '''
-        points1, points2, matches = self.kNNMatch(img, base_img)
+        points1, points2, matches = self.kNNMatch(img, self.img_data[self.imgs_used-1])
 
         if len(points1) == 0:
             print("Not enough matches: "+str(len(matches))+"/"+str(self.MIN_MATCH_COUNT))
@@ -226,21 +202,39 @@ class SFM(object):
         ''' Param Estimation '''
         R, t = self.findDecomposedEssentialMatrix(points1, points2)
 
-        P2 = np.hstack((R, t))
+        P1 = self.img_data[self.imgs_used-1]["pose"]
+        P1_ext = np.vstack((P1, (1, 1, 1, 1)))
+        P_tmp = np.hstack((R, t))
+        P_tmp = np.vstack((P_tmp, (1, 1, 1, 1)))
+        # P2 = P_tmp.dot(P1_ext)
+        P2 = P1_ext.dot(P_tmp)
+        for i in range(4):
+            P2[:,i] /= P2[3,i]
+        P2 = P2[:3, :]
+
+        # P2 = np.hstack((R, t))
+
+        # P1 = self.img_data[self.imgs_used-1]["pose"]
+        # #P2 = np.hstack((np.dot(R, P1[:,:3]), (t.T + P1[:,3]).T))
+        # R1 = P1[:,:3]
+        # t1 = P1[:,3]
+        # # P2 = np.hstack((np.dot(R, R1), (t.T + R.dot(t1)).T))
+        # P2 = np.hstack((np.dot(R1, R), (R1.dot(t).T + t1).T))
+
+        print(P2)
 
         return P2, points1, points2, matches
 
-    def estimate_new_view_pose(self, base_img, img, used_list):
-        # descriptors = [base_img['descriptors']]
+    def estimate_new_view_pose(self, img):
         descriptors = [uImg['descriptors']
-                       for uImg in used_list if len(uImg['descriptors']) > 0]
+                       for uImg in self.img_data[:self.imgs_used-1]]
         
         # descriptors = [self.img_data[self.imgs_used-1]['descriptors']]
 
         # for uImg in self.img_data[:self.imgs_used]:
         #     descriptors.append(uImg['descriptors'])
 
-        prev_pose = base_img['pose']
+        prev_pose = self.img_data[self.imgs_used-1]['pose']
 
         matches = self.trainFlannMatch(img, descriptors)
         # matches = self.kNNMatch(self.img_data[self.imgs_used-1], img)
@@ -251,8 +245,6 @@ class SFM(object):
         for m in matches:
             # clouds are made of image pairs so (0,1) -> cloud_idx:0 (1,2) -> cloud_idx:1, ...
             cloud_idx = m.imgIdx
-            # print(cloud_idx)
-            #cloud_idx = 0
             #if m.imgIdx != 0:
             #    cloud_idx = m.imgIdx-1
 
@@ -271,16 +263,20 @@ class SFM(object):
         #camera_pose = np.zeros((3,4))
         # estimate camera pose from 3d2d Correspondences
         if len(points_3d) > 4 and len(points_2d) > 4:
+            rvec_in, _ = cv.Rodrigues(prev_pose[:,:3])
+            tvec_in = prev_pose[:,3]
             # _, rvec, tvec = cv.solvePnP(
             #                      np.array(points_3d, dtype=np.float64),
             #                      np.array(points_2d, dtype=np.float64),
-            #                      self.K, self.distCoeffs, flags=cv.SOLVEPNP_ITERATIVE)
+            #                      self.K, self.distCoeffs, flags=cv.SOLVEPNP_ITERATIVE,
+            # #                     useExtrinsicGuess=True, rvec=rvec_in, tvec=tvec_in)
             _, rvec, tvec, inliers = cv.solvePnPRansac(
                                 np.array(points_3d, dtype=np.float64),
                                 np.array(points_2d, dtype=np.float64),
                                 self.K, self.distCoeffs, confidence=0.999,
-                                flags=cv.SOLVEPNP_ITERATIVE,
-                                reprojectionError=5.0)
+                                flags=cv.SOLVEPNP_P3P,
+                                useExtrinsicGuess=True, rvec=rvec_in, tvec=prev_pose[:,3],
+                                reprojectionError=3.0)
 
             # LMEDS         PnP               PnPRansac
             # ITERATIVE     8,0               X
@@ -310,10 +306,12 @@ class SFM(object):
             # MAX_COUNT     X                 X
 
             cam_rmat, _ = cv.Rodrigues(rvec)
-            camera_pose = np.concatenate([cam_rmat, tvec], axis=1)
-            print(camera_pose)
+            camera_pose = np.concatenate([cam_rmat.get(), tvec.get()], axis=1)
+            #camera_pose = np.concatenate([cam_rmat, tvec], axis=1)
         else:
             camera_pose = np.zeros((3,4))
+        #    camera_pose[:,:3] = cam_rmat
+        #    camera_pose[:,3] = tvec.T
         return camera_pose
 
 
@@ -328,15 +326,23 @@ class SFM(object):
 
 
     def write_ply(self, points, colors, name='mesh.ply'):
-        # ply_header = ("ply\nformat ascii 1.0\nelement vertex {}\n"
-        #            "property float x\nproperty float y\nproperty float z\n"
-        #            "property uchar red\nproperty uchar green\nproperty uchar blue\n"
-        #            "end_header\n"
-        #            ).format(points.shape[0])
+        #ply_header = (
+        #            '''ply
+        #            format ascii 1.0
+        #            element vertex {vertex_count}
+        #            property float x
+        #            property float y
+        #            property float z
+        #            property uchar red
+        #            property uchar green
+        #            property uchar blue
+        #            end_header
+        #            '''
+        #            )
         filename = 'meshes/'+name
+
         points = np.hstack([points, colors])
-        with open(filename, 'a') as outfile:
-            # outfile.write(ply_header)
+        with open(filename, 'w') as outfile:
             #outfile.write(ply_header.format(vertex_count=len(coords)))
             np.savetxt(outfile, points, '%f %f %f %d %d %d')
 
@@ -373,11 +379,11 @@ if __name__  == '__main__':
     # distCoeffs = camera['distCoeff']
 
     # Castle
-    path = Path('./data/castle')
-    K = np.array([[2905.88, 0, 1416],
-                  [0, 2905.88, 1064],
-                  [0, 0, 1]])
-    distCoeffs = 0
+    # path = Path('./castle')
+    # K = np.array([[2905.88, 0, 1416],
+    #               [0, 2905.88, 1064],
+    #               [0, 0, 1]])
+    # distCoeffs = 0
 
     # Celular
     # path = Path('./images-lantern2')
