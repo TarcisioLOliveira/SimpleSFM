@@ -161,7 +161,7 @@ class SFM(object):
     def findDecomposedEssentialMatrix(self, p1, p2):
         # fundamental matrix and inliers
         # F, mask = cv.findFundamentalMat(p1, p2, cv.FM_LMEDS, 1, 0.999)
-        F, mask = cv.findFundamentalMat(p1, p2, cv.FM_RANSAC, 3.0, 0.999999)
+        F, mask = cv.findFundamentalMat(p1, p2, cv.FM_RANSAC, 1.0, 0.999)
         mask = mask.astype(bool).flatten()
         E = np.dot(self.K.T, np.dot(F, self.K))
 
@@ -280,7 +280,7 @@ class SFM(object):
                                 np.array(points_2d, dtype=np.float64),
                                 self.K, self.distCoeffs, confidence=0.999,
                                 flags=cv.SOLVEPNP_ITERATIVE,
-                                reprojectionError=5.0)
+                                reprojectionError=4.0)
 
             # LMEDS         PnP               PnPRansac
             # ITERATIVE     8,0               X
