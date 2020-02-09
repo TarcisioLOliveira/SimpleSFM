@@ -156,7 +156,7 @@ def adjust(point_cloud_data, K, poses, n_images):
         all_3dpoints.extend(tmp_list)
         point_cloud_data[data_i]['3dpoints'] = tmp_list
 
-    list_3dpoints = np.unique(np.asarray(all_3dpoints), axis=-1)
+    list_3dpoints = np.unique(np.asarray(all_3dpoints), axis=0)
     list_colors = []
     J_rows = len(all_3dpoints)*2
     J_ccols = n_images*7
