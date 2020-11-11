@@ -416,22 +416,22 @@ if __name__  == '__main__':
     if not os.path.isdir("./meshes"):
         os.mkdir("meshes")
 
-    # path = Path('./data/crazyhorse')
-    # distCoeffs = 0
-    # f = 825.26
-    # width = 1024.0
-    # height = 768.0
-    # K = np.array([[f,0,width/2],
-    #               [0,f,height/2],
-    #               [0,0,1]])
+    path = Path('./data/crazyhorse')
+    distCoeffs = 0
+    f = 825.26
+    width = 1024.0
+    height = 768.0
+    K = np.array([[f,0,width/2],
+                  [0,f,height/2],
+                  [0,0,1]])
 
     #Castle
-    path = Path('./castle')
+    #path = Path('./castle')
 
-    K = np.array([[2905.88, 0, 1416],
-                  [0, 2905.88, 1064],
-                  [0, 0, 1]])
-    distCoeffs = 0
+    #K = np.array([[2905.88, 0, 1416],
+    #              [0, 2905.88, 1064],
+    #              [0, 0, 1]])
+    #distCoeffs = 0
 
     img_path_list = sorted([str(x) for x in path.iterdir()])
 
